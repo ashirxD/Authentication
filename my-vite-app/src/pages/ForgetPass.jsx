@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 export default function ForgotPasswordPage() {
-  const [step, setStep] = useState("request"); // "request", "confirm", or "reset"
+  const [step, setStep] = useState("request"); // "request" or "reset"
   const [formData, setFormData] = useState({
     email: "",
     otp: "",
@@ -80,7 +80,7 @@ export default function ForgotPasswordPage() {
         return;
       }
 
-      setStep("confirm");
+      setStep("reset"); // Skip confirm, go directly to reset
       setIsSubmitting(false);
     } catch (err) {
       console.error("OTP request error:", err);
@@ -125,8 +125,6 @@ export default function ForgotPasswordPage() {
       setStep("request");
       setIsSubmitting(false);
       alert("Password reset successful!");
-      // Optionally redirect to sign-in page
-      // window.location.href = "/signin";
     } catch (err) {
       console.error("Password reset error:", err);
       setServerError("Something went wrong. Please try again.");
@@ -201,65 +199,40 @@ export default function ForgotPasswordPage() {
               </div>
             </div>
           </>
-        ) : step === "confirm" ? (
-          <div className="text-center">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
-              <svg
-                className="h-6 w-6 text-green-600"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <h3 className="text-lg font-medium text-gray-900">Check your email</h3>
-            <p className="mt-2 text-sm text-gray-600">
-              We've sent an OTP to:
-            </p>
-            <p className="mt-1 font-medium text-gray-800">{formData.email}</p>
-            <p className="mt-4 text-sm text-gray-600">
-              Didn't receive the email? Check your spam folder or
-            </p>
-            <button
-              type="button"
-              onClick={handleRequestOTP}
-              disabled={isSubmitting}
-              className="mt-1 text-sm font-medium text-blue-600 hover:text-blue-500"
-            >
-              {isSubmitting ? "Sending..." : "try again"}
-            </button>
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={() => setStep("reset")}
-                className="text-sm font-medium text-blue-600 hover:text-blue-500"
-              >
-                Enter OTP and reset password
-              </button>
-            </div>
-            <div className="mt-6">
-              <Link
-                to="/signin"
-                className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-500"
-              >
-                <span className="text-lg mr-1">⬅️</span> Back to sign in
-              </Link>
-            </div>
-          </div>
         ) : (
           <>
             <div className="text-center mb-8">
               <h2 className="text-3xl font-extrabold text-gray-900">Reset Password</h2>
+              <div className="mt-4 mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                <svg
+                  className="h-6 w-6 text-green-600"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+              <p className="text-sm text-gray-600">
+                We've sent an OTP to: <span className="font-medium text-gray-800">{formData.email}</span>
+              </p>
               <p className="mt-2 text-sm text-gray-600">
-                Enter the OTP and your new password
+                Didn't receive the email? Check your spam folder or
+                <button
+                  type="button"
+                  onClick={handleRequestOTP}
+                  disabled={isSubmitting}
+                  className="ml-1 text-sm font-medium text-blue-600 hover:text-blue-500"
+                >
+                  {isSubmitting ? "Sending..." : "resend OTP"}
+                </button>
               </p>
             </div>
 

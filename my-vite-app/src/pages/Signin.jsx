@@ -1,49 +1,52 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
-export default function SignInPage() {
+export default function Signin() {
   const [formData, setFormData] = useState({
     email: "",
     password: "",
+    otp: "",
   });
-
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [serverError, setServerError] = useState("");
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [pendingToken, setPendingToken] = useState("");
+  const navigate = useNavigate();
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-
-    // Clear error when user starts typing
-    if (errors[name]) {
-      setErrors((prev) => ({
-        ...prev,
-        [name]: "",
-      }));
+    const { name, value, type, checked } = e.target;
+    if (type === "checkbox" && name === "rememberMe") {
+      setRememberMe(checked);
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
     }
-    // Clear server error on input change
+
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: "" }));
+    }
     setServerError("");
   };
 
   const validate = () => {
     const newErrors = {};
 
-    // Email validation
     if (!formData.email) {
       newErrors.email = "Email is required";
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
       newErrors.email = "Please enter a valid email";
     }
 
-    // Password validation
-    if (!formData.password) {
+    if (!showOtpInput && !formData.password) {
       newErrors.password = "Password is required";
+    }
+
+    if (showOtpInput && !formData.otp) {
+      newErrors.otp = "OTP is required";
+    } else if (showOtpInput && !/^\d{6}$/.test(formData.otp)) {
+      newErrors.otp = "OTP must be a 6-digit number";
     }
 
     return newErrors;
@@ -53,6 +56,7 @@ export default function SignInPage() {
     const validationErrors = validate();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
+      setIsSubmitting(false);
       return;
     }
 
@@ -60,166 +64,277 @@ export default function SignInPage() {
     setServerError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/signin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      });
+      if (!showOtpInput) {
+        console.log("Sending sign-in request:", { email: formData.email });
+        const response = await fetch("http://localhost:5000/api/signin", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password,
+          }),
+        });
 
-      const data = await response.json();
+        const data = await response.json();
+        console.log("Sign-in response:", data);
 
-      if (!response.ok) {
-        setErrors({});
-        setServerError(data.message || "Sign in failed");
+        if (!response.ok) {
+          setErrors({});
+          setServerError(data.message || "Sign in failed");
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (!data.pendingToken) {
+          setServerError("No pending token received from server");
+          setIsSubmitting(false);
+          return;
+        }
+
+        setPendingToken(data.pendingToken);
+        setShowOtpInput(true);
         setIsSubmitting(false);
-        return;
+      } else {
+        if (!pendingToken) {
+          setServerError("Session expired. Please sign in again.");
+          setShowOtpInput(false);
+          setIsSubmitting(false);
+          return;
+        }
+
+        console.log("Sending OTP verification:", { email: formData.email, otp: formData.otp, pendingToken });
+        const otpResponse = await fetch("http://localhost:5000/api/verify-otp", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: formData.email,
+            otp: formData.otp,
+            pendingToken,
+          }),
+        });
+
+        const otpData = await otpResponse.json();
+        console.log("OTP verification response:", otpData);
+
+        if (!otpResponse.ok) {
+          setErrors({});
+          setServerError(otpData.message || "Invalid or expired OTP");
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (!otpData.token || !otpData.role) {
+          setServerError("Invalid response from server");
+          setIsSubmitting(false);
+          return;
+        }
+
+        localStorage.setItem("token", otpData.token);
+        console.log("Sign in successful, token stored:", { email: formData.email, token: otpData.token, role: otpData.role });
+
+        setFormData({ email: "", password: "", otp: "" });
+        setShowOtpInput(false);
+        setPendingToken("");
+        setIsSubmitting(false);
+
+        // Redirect based on role from server
+        const dashboardPath = otpData.role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard";
+        navigate(dashboardPath);
       }
-
-      // Store JWT token (e.g., in localStorage for simplicity)
-      localStorage.setItem("token", data.token);
-      console.log("Sign in successful:", { email: formData.email, token: data.token });
-
-      // Reset form
-      setFormData({ email: "", password: "" });
-      setIsSubmitting(false);
-      alert("Sign in successful!");
-      // Optionally redirect user, e.g., to dashboard
-      // window.location.href = "/dashboard";
     } catch (err) {
-      console.error("Sign in error:", err);
-      setServerError("Something went wrong. Please try again.");
+      console.error("Error in handleSubmit:", {
+        message: err.message,
+        stack: err.stack,
+        name: err.name,
+      });
+      setServerError(
+        err.message.includes("Failed to fetch")
+          ? "Unable to connect to the server. Please check if the backend is running."
+          : "An unexpected error occurred. Please try again."
+      );
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full bg-white p-8 rounded-lg shadow-md">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-extrabold text-gray-900">
-            Sign in to your account
-          </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            Don't have an account?{" "}
-            <Link
-              to="/"
-              className="font-medium text-blue-600 hover:text-blue-500"
-            >
-              Sign up
-            </Link>
-          </p>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 transform transition-all hover:shadow-2xl">
+        <h2 className="text-3xl font-extrabold text-center text-gray-800 mb-6">
+          Sign In to Your Account
+        </h2>
+        <p className="text-center text-sm text-gray-600 mb-6">
+          Don't have an account?{" "}
+          <Link to="/" className="text-blue-600 font-medium hover:text-blue-800 transition-colors">
+            Sign Up
+          </Link>
+        </p>
 
         {serverError && (
-          <p className="mb-4 text-sm text-red-600 text-center">{serverError}</p>
+          <div className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 text-center mb-6 font-semibold text-base">
+            <p>{serverError}</p>
+            {serverError === "Please verify your email before signing in" && (
+              <p className="mt-2">
+                <Link
+                  to="/verify-email"
+                  className="text-blue-600 font-medium hover:text-blue-800 transition-colors"
+                >
+                  Verify your email now
+                </Link>
+              </p>
+            )}
+          </div>
         )}
 
         <div className="space-y-6">
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Email address
-            </label>
-            <div className="mt-1 relative rounded-md shadow-sm">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <span className="text-gray-400 text-lg">✉️</span>
-              </div>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                value={formData.email}
-                onChange={handleChange}
-                className={`pl-10 block w-full pr-3 py-2 border ${
-                  errors.email ? "border-red-300" : "border-gray-300"
-                } rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
-                placeholder="you@example.com"
-              />
-            </div>
-            {errors.email && (
-              <p className="mt-2 text-sm text-red-600">{errors.email}</p>
-            )}
-          </div>
-
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Password
-            </label>
-            <div className="mt-1 relative rounded-md shadow-sm">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <span className="text-gray-400 text-lg">🔒</span>
-              </div>
-              <input
-                id="password"
-                name="password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
-                value={formData.password}
-                onChange={handleChange}
-                className={`pl-10 block w-full pr-10 py-2 border ${
-                  errors.password ? "border-red-300" : "border-gray-300"
-                } rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
-                placeholder="••••••••"
-              />
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-gray-400 hover:text-gray-500 focus:outline-none"
+          {!showOtpInput ? (
+            <>
+              <div>
+                <label
+                  htmlFor="email"
+                  className="block text-sm font-medium text-gray-700"
                 >
-                  <span className="text-lg">{showPassword ? "🙈" : "👁️"}</span>
-                </button>
+                  Email Address
+                </label>
+                <div className="mt-1 relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="text-gray-400 text-lg">✉️</span>
+                  </div>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    className={`pl-10 w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                      errors.email ? "border-red-500" : "border-gray-300"
+                    }`}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                {errors.email && (
+                  <p className="text-red-500 text-xs mt-1">{errors.email}</p>
+                )}
               </div>
-            </div>
-            {errors.password && (
-              <p className="mt-2 text-sm text-red-600">{errors.password}</p>
-            )}
-          </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <input
-                id="remember-me"
-                name="remember-me"
-                type="checkbox"
-                checked={rememberMe}
-                onChange={() => setRememberMe(!rememberMe)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Password
+                </label>
+                <div className="mt-1 relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="text-gray-400 text-lg">🔒</span>
+                  </div>
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    value={formData.password}
+                    onChange={handleChange}
+                    className={`pl-10 pr-10 w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                      errors.password ? "border-red-500" : "border-gray-300"
+                    }`}
+                    placeholder="••••••••"
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="text-gray-400 hover:text-gray-500 focus:outline-none"
+                    >
+                      <span className="text-lg">{showPassword ? "🙈" : "👁️"}</span>
+                    </button>
+                  </div>
+                </div>
+                {errors.password && (
+                  <p className="text-red-500 text-xs mt-1">{errors.password}</p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <input
+                    id="remember-me"
+                    name="rememberMe"
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={handleChange}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label
+                    htmlFor="remember-me"
+                    className="ml-2 block text-sm text-gray-700"
+                  >
+                    Remember me
+                  </label>
+                </div>
+
+                <div className="text-sm">
+                  <Link
+                    to="/forgetpass"
+                    className="text-blue-600 font-medium hover:text-blue-800 transition-colors"
+                  >
+                    Forgot your password?
+                  </Link>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div>
               <label
-                htmlFor="remember-me"
-                className="ml-2 block text-sm text-gray-900"
+                htmlFor="otp"
+                className="block text-sm font-medium text-gray-700"
               >
-                Remember me
+                Enter OTP
               </label>
+              <div className="mt-1 relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <span className="text-gray-400 text-lg">🔐</span>
+                </div>
+                <input
+                  id="otp"
+                  name="otp"
+                  type="text"
+                  value={formData.otp}
+                  onChange={handleChange}
+                  className={`pl-10 w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+                    errors.otp ? "border-red-500" : "border-gray-300"
+                  }`}
+                  placeholder="Enter 6-digit OTP"
+                />
+              </div>
+              {errors.otp && (
+                <p className="text-red-500 text-xs mt-1">{errors.otp}</p>
+              )}
             </div>
-
-            <div className="text-sm">
-              <Link
-                to="/forgetpass"
-                className="font-medium text-blue-600 hover:text-blue-500"
-              >
-                Forgot your password
-              </Link>
-            </div>
-          </div>
+          )}
 
           <div>
             <button
               type="button"
               onClick={handleSubmit}
               disabled={isSubmitting}
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              className={`w-full p-3 text-white rounded-lg shadow-md transition-all duration-300 ${
+                isSubmitting
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:ring-4 focus:ring-blue-300"
+              }`}
             >
-              {isSubmitting ? "Signing in..." : "Sign in"}
+              {isSubmitting
+                ? showOtpInput
+                  ? "Verifying OTP..."
+                  : "Sending OTP..."
+                : showOtpInput
+                ? "Verify OTP"
+                : "Sign In"}
             </button>
           </div>
         </div>
@@ -240,7 +355,7 @@ export default function SignInPage() {
             <div>
               <a
                 href="#"
-                className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors"
               >
                 <span className="sr-only">Sign in with Google</span>
                 <svg
@@ -255,7 +370,7 @@ export default function SignInPage() {
             <div>
               <a
                 href="#"
-                className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                className="w-full inline-flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 transition-colors"
               >
                 <span className="sr-only">Sign in with GitHub</span>
                 <svg
