@@ -2,13 +2,18 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const authRoutes = require('./routes/auth');
+console.log('Starting server...');
 
 const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+console.log('Middleware configured');
 
 // Verify environment variables
 if (!process.env.MONGODB_URI) {
@@ -32,11 +37,15 @@ console.log('MONGODB_URI:', process.env.MONGODB_URI);
 console.log('PORT:', process.env.PORT || 5000);
 console.log('EMAIL_USER:', process.env.EMAIL_USER);
 console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? '**** (hidden)' : 'undefined');
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL || 'http://localhost:5173');
 
 // MongoDB Connection
+console.log('Connecting to MongoDB...');
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
-  family: 4, // Force IPv4
+  family: 4,
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 }).then(() => {
   console.log('MongoDB connected successfully');
 }).catch(err => {
@@ -49,7 +58,14 @@ mongoose.connect(process.env.MONGODB_URI, {
 });
 
 // Routes
-app.use('/api', authRoutes);
+try {
+  const routes = require('./routes/index'); // Fixed: Correct path
+  app.use('/api', routes);
+  console.log('Routes loaded successfully');
+} catch (err) {
+  console.error('Error loading routes:', err);
+  process.exit(1);
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {

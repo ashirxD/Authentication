@@ -23,6 +23,10 @@ const userSchema = new mongoose.Schema({
     enum: ["doctor", "patient"],
     default: "patient",
   },
+  specialization: {
+    type: String,
+    default: null,
+  },
   otp: {
     type: String,
   },
