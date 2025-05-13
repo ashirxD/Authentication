@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 
 export default function ForgotPasswordPage() {
@@ -11,6 +11,27 @@ export default function ForgotPasswordPage() {
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(600); // 10 minutes in seconds
+  const [isTimerExpired, setIsTimerExpired] = useState(false);
+
+  // Start or reset timer when entering reset step or requesting new OTP
+  useEffect(() => {
+    if (step === "reset") {
+      setTimeLeft(600);
+      setIsTimerExpired(false);
+      const timer = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            setIsTimerExpired(true);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [step]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -63,7 +84,7 @@ export default function ForgotPasswordPage() {
     setServerError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/forgot-password", {
+      const response = await fetch("http://localhost:5000/api/email/forgot-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -80,7 +101,7 @@ export default function ForgotPasswordPage() {
         return;
       }
 
-      setStep("reset"); // Skip confirm, go directly to reset
+      setStep("reset");
       setIsSubmitting(false);
     } catch (err) {
       console.error("OTP request error:", err);
@@ -90,6 +111,11 @@ export default function ForgotPasswordPage() {
   };
 
   const handleResetPassword = async () => {
+    if (isTimerExpired) {
+      setServerError("OTP has expired. Please request a new OTP.");
+      return;
+    }
+
     const validationErrors = validateReset();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
@@ -100,7 +126,7 @@ export default function ForgotPasswordPage() {
     setServerError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/reset-password", {
+      const response = await fetch("http://localhost:5000/api/email/reset-password", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -130,6 +156,13 @@ export default function ForgotPasswordPage() {
       setServerError("Something went wrong. Please try again.");
       setIsSubmitting(false);
     }
+  };
+
+  // Format time left as MM:SS
+  const formatTime = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${minutes}:${secs < 10 ? "0" : ""}${secs}`;
   };
 
   return (
@@ -224,6 +257,12 @@ export default function ForgotPasswordPage() {
                 We've sent an OTP to: <span className="font-medium text-gray-800">{formData.email}</span>
               </p>
               <p className="mt-2 text-sm text-gray-600">
+                Enter the OTP within{" "}
+                <span className={`font-medium ${isTimerExpired ? "text-red-600" : "text-gray-800"}`}>
+                  {formatTime(timeLeft)}
+                </span>
+              </p>
+              <p className="mt-2 text-sm text-gray-600">
                 Didn't receive the email? Check your spam folder or
                 <button
                   type="button"
@@ -255,8 +294,9 @@ export default function ForgotPasswordPage() {
                     type="text"
                     value={formData.otp}
                     onChange={handleChange}
+                    disabled={isTimerExpired}
                     className={`block w-full pr-3 py-2 border ${
-                      errors.otp ? "border-red-300" : "border-gray-300"
+                      errors.otp || isTimerExpired ? "border-red-300" : "border-gray-300"
                     } rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
                     placeholder="Enter 6-digit OTP"
                   />
@@ -283,8 +323,9 @@ export default function ForgotPasswordPage() {
                     type="password"
                     value={formData.newPassword}
                     onChange={handleChange}
+                    disabled={isTimerExpired}
                     className={`pl-10 block w-full pr-3 py-2 border ${
-                      errors.newPassword ? "border-red-300" : "border-gray-300"
+                      errors.newPassword || isTimerExpired ? "border-red-300" : "border-gray-300"
                     } rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm`}
                     placeholder="••••••••"
                   />
@@ -298,7 +339,7 @@ export default function ForgotPasswordPage() {
                 <button
                   type="button"
                   onClick={handleResetPassword}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isTimerExpired}
                   className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                 >
                   {isSubmitting ? "Resetting..." : "Reset Password"}

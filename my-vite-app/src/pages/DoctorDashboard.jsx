@@ -1,56 +1,85 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { CalendarIcon, UserGroupIcon, ArrowRightOnRectangleIcon } from "@heroicons/react/24/outline";
+import {
+  CalendarIcon,
+  UserGroupIcon,
+  ArrowRightOnRectangleIcon,
+  PencilIcon,
+} from "@heroicons/react/24/outline";
 
 export default function DoctorDashboard() {
-  const [userData, setUserData] = useState({ name: "", role: "" });
+  const [userData, setUserData] = useState({
+    name: "",
+    role: "",
+    specialization: "",
+    profilePicture: "",
+  });
+  const [editData, setEditData] = useState({
+    name: "",
+    specialization: "",
+    profilePicture: null,
+  });
+  const [previewUrl, setPreviewUrl] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [activeSection, setActiveSection] = useState("appointments");
   const navigate = useNavigate();
 
-  // Fetch user data and enforce doctor-only access
-  useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) {
-          navigate("/signin");
-          return;
-        }
+  // Fetch user data
+  const fetchUserData = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        navigate("/signin");
+        return;
+      }
 
-        const response = await fetch("http://localhost:5000/api/user", {
-          method: "GET",
-          headers: {
-            "Authorization": `Bearer ${token}`,
-          },
-        });
+      const response = await fetch("http://localhost:5000/api/doctor/user", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-        const data = await response.json();
-        console.log("Doctor dashboard user data:", data);
+      const data = await response.json();
+      console.log("Doctor dashboard user data:", data);
 
-        if (!response.ok) {
-          setError(data.message || "Failed to fetch user data");
-          localStorage.removeItem("token");
-          navigate("/signin");
-          return;
-        }
-
-        if (data.role !== "doctor") {
-          setError("Access denied: Not a doctor");
-          localStorage.removeItem("token");
-          navigate("/signin");
-          return;
-        }
-
-        setUserData({ name: data.name, role: data.role });
-      } catch (err) {
-        console.error("Error fetching user data:", err);
-        setError("Something went wrong. Please try again.");
+      if (!response.ok) {
+        setError(data.message || "Failed to fetch user data");
         localStorage.removeItem("token");
         navigate("/signin");
+        return;
       }
-    };
 
+      if (data.role !== "doctor") {
+        setError("Access denied: Not a doctor");
+        localStorage.removeItem("token");
+        navigate("/signin");
+        return;
+      }
+
+      setUserData({
+        name: data.name || "",
+        role: data.role || "",
+        specialization: data.specialization || "",
+        profilePicture: data.profilePicture || "",
+      });
+      setEditData({
+        name: data.name || "",
+        specialization: data.specialization || "",
+        profilePicture: null,
+      });
+    } catch (err) {
+      console.error("Error fetching user data:", err);
+      setError("Something went wrong. Please try again.");
+      localStorage.removeItem("token");
+      navigate("/signin");
+    }
+  };
+
+  // Initial fetch
+  useEffect(() => {
     fetchUserData();
   }, [navigate]);
 
@@ -60,18 +89,141 @@ export default function DoctorDashboard() {
     navigate("/signin");
   };
 
+  // Handle form input changes
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setEditData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  // Handle file input change and generate preview
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    setEditData((prev) => ({ ...prev, profilePicture: file }));
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+      console.log("Selected file:", file.name, file.type, file.size);
+    } else {
+      setPreviewUrl("");
+    }
+  };
+
+  // Clean up preview URL to avoid memory leaks
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  // Handle form submission
+  const handleProfileUpdate = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setIsLoading(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      const formData = new FormData();
+      formData.append("name", editData.name);
+      formData.append("specialization", editData.specialization);
+      if (editData.profilePicture) {
+        formData.append("profilePicture", editData.profilePicture);
+        console.log("FormData includes profilePicture:", editData.profilePicture.name);
+      } else {
+        console.log("FormData: No profilePicture included");
+      }
+
+      // Log FormData keys
+      for (let [key, value] of formData.entries()) {
+        console.log(`FormData entry: ${key}=${value instanceof File ? value.name : value}`);
+      }
+
+      const response = await fetch("http://localhost:5000/api/doctor/profile", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const data = await response.json();
+      console.log("Profile update response:", data);
+
+      if (!response.ok) {
+        setError(data.message || "Failed to update profile");
+        setIsLoading(false);
+        return;
+      }
+
+      // Refetch user data to ensure consistency
+      await fetchUserData();
+
+      setEditData({
+        name: data.user.name,
+        specialization: data.user.specialization,
+        profilePicture: null,
+      });
+      setPreviewUrl("");
+      setSuccess("Profile updated successfully!");
+    } catch (err) {
+      console.error("Error updating profile:", err);
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Mock data for appointments
   const appointments = [
-    { id: 1, patient: "John Doe", date: "2025-05-10", time: "10:00 AM", reason: "Routine Checkup" },
-    { id: 2, patient: "Jane Smith", date: "2025-05-11", time: "2:00 PM", reason: "Follow-up" },
-    { id: 3, patient: "Alice Johnson", date: "2025-05-12", time: "9:30 AM", reason: "Consultation" },
+    {
+      id: 1,
+      patient: "John Doe",
+      date: "2025-05-10",
+      time: "10:00 AM",
+      reason: "Routine Checkup",
+    },
+    {
+      id: 2,
+      patient: "Jane Smith",
+      date: "2025-05-11",
+      time: "2:00 PM",
+      reason: "Follow-up",
+    },
+    {
+      id: 3,
+      patient: "Alice Johnson",
+      date: "2025-05-12",
+      time: "9:30 AM",
+      reason: "Consultation",
+    },
   ];
 
   // Mock data for patients
   const patients = [
-    { id: 1, name: "John Doe", age: 45, lastVisit: "2025-04-20", condition: "Hypertension" },
-    { id: 2, name: "Jane Smith", age: 32, lastVisit: "2025-05-01", condition: "Diabetes" },
-    { id: 3, name: "Alice Johnson", age: 28, lastVisit: "2025-03-15", condition: "Asthma" },
+    {
+      id: 1,
+      name: "John Doe",
+      age: 45,
+      lastVisit: "2025-04-20",
+      condition: "Hypertension",
+    },
+    {
+      id: 2,
+      name: "Jane Smith",
+      age: 32,
+      lastVisit: "2025-05-01",
+      condition: "Diabetes",
+    },
+    {
+      id: 3,
+      name: "Alice Johnson",
+      age: 28,
+      lastVisit: "2025-03-15",
+      condition: "Asthma",
+    },
   ];
 
   // Render content based on active section
@@ -80,7 +232,9 @@ export default function DoctorDashboard() {
       case "appointments":
         return (
           <div>
-            <h3 className="text-2xl font-semibold text-gray-800 mb-4">Upcoming Appointments</h3>
+            <h3 className="text-2xl font-semibold text-gray-800 mb-4">
+              Upcoming Appointments
+            </h3>
             <div className="overflow-x-auto">
               <table className="min-w-full bg-white rounded-lg shadow">
                 <thead>
@@ -94,13 +248,18 @@ export default function DoctorDashboard() {
                 </thead>
                 <tbody className="text-gray-600 text-sm font-light">
                   {appointments.map((appointment) => (
-                    <tr key={appointment.id} className="border-b border-gray-200 hover:bg-gray-50">
+                    <tr
+                      key={appointment.id}
+                      className="border-b border-gray-200 hover:bg-gray-50"
+                    >
                       <td className="py-3 px-6">{appointment.patient}</td>
                       <td className="py-3 px-6">{appointment.date}</td>
                       <td className="py-3 px-6">{appointment.time}</td>
                       <td className="py-3 px-6">{appointment.reason}</td>
                       <td className="py-3 px-6 text-center">
-                        <button className="text-blue-600 hover:text-blue-800">View Details</button>
+                        <button className="text-blue-600 hover:text-blue-800">
+                          View Details
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -112,17 +271,125 @@ export default function DoctorDashboard() {
       case "patients":
         return (
           <div>
-            <h3 className="text-2xl font-semibold text-gray-800 mb-4">My Patients</h3>
+            <h3 className="text-2xl font-semibold text-gray-800 mb-4">
+              My Patients
+            </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {patients.map((patient) => (
-                <div key={patient.id} className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition">
-                  <h4 className="text-lg font-semibold text-gray-800">{patient.name}</h4>
+                <div
+                  key={patient.id}
+                  className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition"
+                >
+                  <h4 className="text-lg font-semibold text-gray-800">
+                    {patient.name}
+                  </h4>
                   <p className="text-gray-600">Age: {patient.age}</p>
-                  <p className="text-gray-600">Last Visit: {patient.lastVisit}</p>
-                  <p className="text-gray-600">Condition: {patient.condition}</p>
-                  <button className="mt-4 text-blue-600 hover:text-blue-800">View Profile</button>
+                  <p className="text-gray-600">
+                    Last Visit: {patient.lastVisit}
+                  </p>
+                  <p className="text-gray-600">
+                    Condition: {patient.condition}
+                  </p>
+                  <button className="mt-4 text-blue-600 hover:text-blue-800">
+                    View Profile
+                  </button>
                 </div>
               ))}
+            </div>
+          </div>
+        );
+      case "edit-profile":
+        return (
+          <div>
+            <h3 className="text-2xl font-semibold text-gray-800 mb-4">
+              Edit Profile
+            </h3>
+            <div className="bg-white rounded-lg shadow p-6 max-w-md">
+              {success && (
+                <p className="text-green-600 bg-green-100 border border-green-400 rounded-md p-3 mb-4 font-semibold">
+                  {success}
+                </p>
+              )}
+              {error && (
+                <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-4 font-semibold">
+                  {error}
+                </p>
+              )}
+              <form onSubmit={handleProfileUpdate}>
+                <div className="mb-4">
+                  <label
+                    htmlFor="name"
+                    className="block text-gray-700 font-medium mb-2"
+                  >
+                    Name *
+                  </label>
+                  <input
+                    type="text"
+                    id="name"
+                    name="name"
+                    value={editData.name}
+                    onChange={handleInputChange}
+                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div className="mb-4">
+                  <label
+                    htmlFor="specialization"
+                    className="block text-gray-700 font-medium mb-2"
+                  >
+                    Specialization
+                  </label>
+                  <input
+                    type="text"
+                    id="specialization"
+                    name="specialization"
+                    value={editData.specialization}
+                    onChange={handleInputChange}
+                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="mb-4">
+                  <label
+                    htmlFor="profilePicture"
+                    className="block text-gray-700 font-medium mb-2"
+                  >
+                    Profile Picture
+                  </label>
+                  {(previewUrl || (userData.profilePicture && userData.profilePicture !== "")) && (
+                    <div className="mb-2">
+                      <img
+                        src={
+                          previewUrl ||
+                          `http://localhost:5000${userData.profilePicture}?t=${Date.now()}`
+                        }
+                        alt="Profile Preview"
+                        className="w-24 h-24 rounded-full object-cover"
+                        onError={(e) => console.error("Image load error:", userData.profilePicture, e)}
+                      />
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    id="profilePicture"
+                    name="profilePicture"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="w-full p-2 border rounded-md"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className={`w-full p-2 rounded-md text-white transition ${
+                    isLoading
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
+                >
+                  {isLoading ? "Updating..." : "Update Profile"}
+                </button>
+              </form>
             </div>
           </div>
         );
@@ -136,12 +403,16 @@ export default function DoctorDashboard() {
       {/* Sidebar */}
       <div className="w-64 bg-white shadow-lg p-6 flex flex-col justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-8">Doctor Dashboard</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-8">
+            Doctor Dashboard
+          </h2>
           <nav className="space-y-2">
             <button
               onClick={() => setActiveSection("appointments")}
               className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-                activeSection === "appointments" ? "bg-blue-100 text-blue-600" : ""
+                activeSection === "appointments"
+                  ? "bg-blue-100 text-blue-600"
+                  : ""
               }`}
             >
               <CalendarIcon className="w-6 h-6 mr-3" />
@@ -155,6 +426,17 @@ export default function DoctorDashboard() {
             >
               <UserGroupIcon className="w-6 h-6 mr-3" />
               Patients
+            </button>
+            <button
+              onClick={() => setActiveSection("edit-profile")}
+              className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
+                activeSection === "edit-profile"
+                  ? "bg-blue-100 text-blue-600"
+                  : ""
+              }`}
+            >
+              <PencilIcon className="w-6 h-6 mr-3" />
+              Edit Profile
             </button>
           </nav>
         </div>
@@ -170,9 +452,28 @@ export default function DoctorDashboard() {
       {/* Main Content */}
       <div className="flex-1 p-8">
         <div className="max-w-5xl mx-auto">
-          <div className="mb-8">
-            <h1 className="text-3xl font-extrabold text-gray-800">Welcome, Dr. {userData.name || "Loading..."}!</h1>
-            <p className="text-gray-600">Manage your practice efficiently from your dashboard.</p>
+          <div className="mb-8 flex items-center space-x-4">
+            {userData.profilePicture && userData.profilePicture !== "" && (
+              <img
+                src={`http://localhost:5000${userData.profilePicture}?t=${Date.now()}`}
+                alt="Profile"
+                className="w-12 h-12 rounded-full object-cover"
+                onError={(e) => console.error("Header image load error:", userData.profilePicture, e)}
+              />
+            )}
+            <div>
+              <h1 className="text-3xl font-extrabold text-gray-800">
+                Welcome, Dr. {userData.name || "Loading..."}!
+              </h1>
+              <p className="text-gray-600">
+                Manage your practice efficiently from your dashboard.
+              </p>
+              {userData.specialization && (
+                <p className="text-blue-700 font-medium mt-1">
+                  Specialization: {userData.specialization}
+                </p>
+              )}
+            </div>
           </div>
           {error && (
             <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-6 font-semibold text-base">

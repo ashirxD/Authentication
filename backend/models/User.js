@@ -27,6 +27,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  profilePicture: { type: String },
   otp: {
     type: String,
   },

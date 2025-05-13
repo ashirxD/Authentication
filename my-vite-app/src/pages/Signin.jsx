@@ -1,5 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useSelector, useDispatch } from "react-redux";
+import {
+  loginStart,
+  loginSuccess,
+  loginFailure,
+  verifyOtpSuccess,
+  verifyOtpFailure,
+  resendOtpStart,
+  resendOtpSuccess,
+  resendOtpFailure,
+} from "../redux/slices/authSlice";
 
 export default function Signin() {
   const [formData, setFormData] = useState({
@@ -9,12 +20,35 @@ export default function Signin() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [serverError, setServerError] = useState("");
-  const [showOtpInput, setShowOtpInput] = useState(false);
-  const [pendingToken, setPendingToken] = useState("");
+  const [timeLeft, setTimeLeft] = useState(600); // 10 minutes in seconds
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const { showOtpInput, pendingToken, loading, error } = useSelector((state) => state.auth);
+
+  // Timer effect
+  useEffect(() => {
+    if (!showOtpInput || timeLeft <= 0) return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 0) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [showOtpInput, timeLeft]);
+
+  // Format time in MM:SS
+  const formatTime = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -27,7 +61,6 @@ export default function Signin() {
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: "" }));
     }
-    setServerError("");
   };
 
   const validate = () => {
@@ -54,19 +87,17 @@ export default function Signin() {
 
   const handleSubmit = async () => {
     const validationErrors = validate();
+    console.log("[Signin] Form submitted:", { formData, validationErrors });
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
-      setIsSubmitting(false);
       return;
     }
 
-    setIsSubmitting(true);
-    setServerError("");
-
     try {
       if (!showOtpInput) {
-        console.log("Sending sign-in request:", { email: formData.email });
-        const response = await fetch("http://localhost:5000/api/signin", {
+        console.log("[Signin] Sending sign-in request:", { email: formData.email });
+        dispatch(loginStart());
+        const response = await fetch("http://localhost:5000/api/auth/signin", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -78,34 +109,34 @@ export default function Signin() {
         });
 
         const data = await response.json();
-        console.log("Sign-in response:", data);
+        console.log("[Signin] Sign-in response:", { status: response.status, data });
 
         if (!response.ok) {
-          setErrors({});
-          setServerError(data.message || "Sign in failed");
-          setIsSubmitting(false);
+          dispatch(loginFailure(data.message || "Sign in failed"));
+          setErrors({ server: data.message || "Sign in failed" });
           return;
         }
 
         if (!data.pendingToken) {
-          setServerError("No pending token received from server");
-          setIsSubmitting(false);
+          dispatch(loginFailure("No pending token received from server"));
+          setErrors({ server: "No pending token received from server" });
           return;
         }
 
-        setPendingToken(data.pendingToken);
-        setShowOtpInput(true);
-        setIsSubmitting(false);
+        dispatch(loginSuccess({ pendingToken: data.pendingToken }));
+        console.log("[Signin] Login success, pendingToken:", data.pendingToken);
+        setTimeLeft(600); // Reset timer
       } else {
         if (!pendingToken) {
-          setServerError("Session expired. Please sign in again.");
-          setShowOtpInput(false);
-          setIsSubmitting(false);
+          dispatch(loginFailure("Session expired. Please sign in again."));
+          setErrors({ server: "Session expired. Please sign in again." });
+          setTimeLeft(0);
           return;
         }
 
-        console.log("Sending OTP verification:", { email: formData.email, otp: formData.otp, pendingToken });
-        const otpResponse = await fetch("http://localhost:5000/api/verify-otp", {
+        console.log("[Signin] Sending OTP verification:", { email: formData.email, otp: formData.otp, pendingToken });
+        dispatch(loginStart());
+        const otpResponse = await fetch("http://localhost:5000/api/auth/verify-otp", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -118,48 +149,117 @@ export default function Signin() {
         });
 
         const otpData = await otpResponse.json();
-        console.log("OTP verification response:", otpData);
+        console.log("[Signin] OTP verification response:", {
+          status: otpResponse.status,
+          statusText: otpResponse.statusText,
+          data: otpData,
+        });
 
         if (!otpResponse.ok) {
-          setErrors({});
-          setServerError(otpData.message || "Invalid or expired OTP");
-          setIsSubmitting(false);
+          dispatch(verifyOtpFailure(otpData.message || "Invalid or expired OTP"));
+          setErrors({ otp: otpData.message || "Invalid or expired OTP" });
           return;
         }
 
-        if (!otpData.token || !otpData.role) {
-          setServerError("Invalid response from server");
-          setIsSubmitting(false);
+        if (!otpData.token) {
+          dispatch(verifyOtpFailure("Invalid response: missing token"));
+          setErrors({ server: "Invalid response from server: missing token" });
+          return;
+        }
+
+        // Handle role flexibly
+        const userRole = otpData.role || (otpData.user && otpData.user.role);
+        if (!userRole) {
+          dispatch(verifyOtpFailure("Invalid response: missing role"));
+          setErrors({ server: "Invalid response from server: missing role" });
           return;
         }
 
         localStorage.setItem("token", otpData.token);
-        console.log("Sign in successful, token stored:", { email: formData.email, token: otpData.token, role: otpData.role });
+        console.log("[Signin] Token stored:", {
+          token: otpData.token,
+          role: userRole,
+          email: formData.email,
+        });
+
+        dispatch(
+          verifyOtpSuccess({
+            user: otpData.user || otpData,
+            role: userRole,
+            isEmailVerified: otpData.isEmailVerified || true,
+          })
+        );
+        console.log("[Signin] OTP success, state updated:", { role: userRole });
 
         setFormData({ email: "", password: "", otp: "" });
-        setShowOtpInput(false);
-        setPendingToken("");
-        setIsSubmitting(false);
+        setTimeLeft(0);
 
-        // Redirect based on role from server
-        const dashboardPath = otpData.role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard";
-        navigate(dashboardPath);
+        // Delay navigation to ensure state update
+        setTimeout(() => {
+          const dashboardPath = userRole === "doctor" ? "/doctor-dashboard" : "/patient-dashboard";
+          console.log("[Signin] Navigating to:", dashboardPath);
+          navigate(dashboardPath);
+        }, 100);
       }
     } catch (err) {
-      console.error("Error in handleSubmit:", {
+      console.error("[Signin] Error:", {
         message: err.message,
         stack: err.stack,
         name: err.name,
       });
-      setServerError(
-        err.message.includes("Failed to fetch")
-          ? "Unable to connect to the server. Please check if the backend is running."
-          : "An unexpected error occurred. Please try again."
+      dispatch(
+        showOtpInput
+          ? verifyOtpFailure(
+              err.message.includes("Failed to fetch")
+                ? "Unable to connect to server. Check backend."
+                : "Unexpected error."
+            )
+          : loginFailure(
+              err.message.includes("Failed to fetch")
+                ? "Unable to connect to server. Check backend."
+                : "Unexpected error."
+            )
       );
-      setIsSubmitting(false);
+      setErrors({ server: err.message.includes("Failed to fetch") ? "Unable to connect to server." : "Unexpected error." });
     }
   };
 
+  const handleResendOtp = async () => {
+    dispatch(resendOtpStart());
+    try {
+      const response = await fetch('http://localhost:5000/api/email/resend-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: formData.email,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('[Signin] Resend OTP response:', { status: response.status, data });
+
+      if (response.ok) {
+        dispatch(resendOtpSuccess());
+        setTimeLeft(600); // Reset timer
+        setFormData((prev) => ({ ...prev, otp: '' }));
+      } else {
+        dispatch(resendOtpFailure(data.message || 'Failed to resend OTP'));
+        setErrors({ server: data.message || 'Failed to resend OTP' });
+      }
+    } catch (error) {
+      console.error('[Signin] Resend OTP error:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+      });
+      dispatch(resendOtpFailure('Failed to connect to server.'));
+      setErrors({ server: 'Failed to connect to server.' });
+    }
+  };
+
+  // Rest of your JSX remains unchanged
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 transform transition-all hover:shadow-2xl">
@@ -173,10 +273,10 @@ export default function Signin() {
           </Link>
         </p>
 
-        {serverError && (
+        {error && (
           <div className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 text-center mb-6 font-semibold text-base">
-            <p>{serverError}</p>
-            {serverError === "Please verify your email before signing in" && (
+            <p>{error}</p>
+            {error === "Please verify your email before signing in" && (
               <p className="mt-2">
                 <Link
                   to="/verify-email"
@@ -305,14 +405,30 @@ export default function Signin() {
                   type="text"
                   value={formData.otp}
                   onChange={handleChange}
+                  disabled={timeLeft <= 0}
                   className={`pl-10 w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                    errors.otp ? "border-red-500" : "border-gray-300"
+                    errors.otp || timeLeft <= 0 ? "border-red-500" : "border-gray-300"
                   }`}
                   placeholder="Enter 6-digit OTP"
                 />
               </div>
               {errors.otp && (
                 <p className="text-red-500 text-xs mt-1">{errors.otp}</p>
+              )}
+              <p className="text-gray-600 text-sm mt-2">
+                Time remaining: {formatTime(timeLeft)}
+              </p>
+              {timeLeft <= 0 && (
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={loading}
+                  className={`mt-2 w-full p-2 text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors ${
+                    loading ? "opacity-50 cursor-not-allowed" : ""
+                  }`}
+                >
+                  {loading ? "Resending..." : "Resend OTP"}
+                </button>
               )}
             </div>
           )}
@@ -321,14 +437,14 @@ export default function Signin() {
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={isSubmitting}
+              disabled={loading || (showOtpInput && timeLeft <= 0)}
               className={`w-full p-3 text-white rounded-lg shadow-md transition-all duration-300 ${
-                isSubmitting
+                loading || (showOtpInput && timeLeft <= 0)
                   ? "bg-gray-400 cursor-not-allowed"
                   : "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:ring-4 focus:ring-blue-300"
               }`}
             >
-              {isSubmitting
+              {loading
                 ? showOtpInput
                   ? "Verifying OTP..."
                   : "Sending OTP..."

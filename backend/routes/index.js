@@ -1,21 +1,26 @@
-const express = require('express');
-
-const emailRoutes = require('./emailRoutes');
-const userRoutes = require('./userRoutes');
-const AuthRoutes = require('./authRoutes');
-
-
+const express = require("express");
 const router = express.Router();
+const emailRoutes = require("./emailRoutes");
+const userRoutes = require("./userRoutes");
+const authRoutes = require("./authRoutes"); // Fixed: Use 'auth' assuming file is auth.js
+const doctorRoutes = require("./doctorRoutes");
+const patientRoutes = require("./patientRoutes");
+const { authenticateToken } = require("../middleware/auth");
 
-console.log('Mounting routes: auth, email, user');
+console.log("Mounting routes: auth, email, user, doctor");
 
-router.use('/email', emailRoutes);
-router.use('/user', userRoutes);
-router.use('/auth', AuthRoutes);
+// Public routes
+router.use("/auth", authRoutes);
+router.use("/email", emailRoutes);
+
+// Protected routes
+router.use("/user", authenticateToken, userRoutes);
+router.use("/doctor", authenticateToken, doctorRoutes);
+router.use("/patient", authenticateToken, patientRoutes);
 
 
-router.get('/', (req, res) => {
-  res.send('Auth API root - working!');
+router.get("/", (req, res) => {
+  res.send("Auth API root - working!");
 });
 
 module.exports = router;
