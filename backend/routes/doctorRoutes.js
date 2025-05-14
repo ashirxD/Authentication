@@ -27,13 +27,7 @@ try {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     console.log("Multer destination:", uploadDir);
-    try {
-      fs.accessSync(uploadDir, fs.constants.W_OK);
-      cb(null, uploadDir);
-    } catch (err) {
-      console.error("Multer destination error:", err);
-      cb(err);
-    }
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const filename = `${Date.now()}-${file.originalname}`;
@@ -51,7 +45,7 @@ const upload = multer({
     }
     cb(null, true);
   },
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
 }).single("profilePicture");
 
 // Middleware to handle Multer errors
@@ -87,7 +81,12 @@ router.get("/user", async (req, res) => {
     if (user.role !== "doctor") {
       return res.status(403).json({ message: "Access denied: Not a doctor" });
     }
-    console.log("Fetched user data:", user);
+    console.log("Fetched user data:", {
+      id: user._id,
+      name: user.name,
+      twoFAEnabled: user.twoFAEnabled,
+      availability: user.availability,
+    });
     res.json(user);
   } catch (err) {
     console.error("Error in GET /user:", {
@@ -105,24 +104,80 @@ router.put("/profile", upload, handleMulterError, async (req, res) => {
       return res.status(401).json({ message: "Unauthorized: Invalid user" });
     }
 
-    const { name, specialization } = req.body;
+    const { name, specialization, twoFAEnabled, startTime, endTime, days } = req.body;
     console.log("Received profile update:", {
       name,
       specialization,
-      file: req.file ? req.file.originalname : "No file uploaded",
-      body: req.body,
+      twoFAEnabled,
+      startTime,
+      endTime,
+      days,
+      type: typeof twoFAEnabled,
     });
 
     if (!name || name.trim().length === 0) {
       return res.status(400).json({ message: "Name is required" });
+    }
+    if (twoFAEnabled === undefined) {
+      console.log("twoFAEnabled missing");
+      return res.status(400).json({ message: "twoFAEnabled is required" });
+    }
+
+    // Validate availability times and days
+    let parsedDays = [];
+    if (days) {
+      try {
+        parsedDays = JSON.parse(days);
+        if (!Array.isArray(parsedDays) || parsedDays.length === 0) {
+          return res.status(400).json({ message: "At least one shift day is required" });
+        }
+        const validDays = [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday",
+        ];
+        if (!parsedDays.every((day) => validDays.includes(day))) {
+          return res.status(400).json({ message: "Invalid day names provided" });
+        }
+      } catch (err) {
+        return res.status(400).json({ message: "Invalid days format" });
+      }
+    } else {
+      return res.status(400).json({ message: "Shift days are required" });
+    }
+
+    if (!startTime || !endTime) {
+      return res.status(400).json({ message: "Start and end times are required" });
+    }
+
+    // Validate time format (HH:mm)
+    const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+      return res.status(400).json({ message: "Invalid time format (use HH:mm)" });
+    }
+
+    const start = new Date(`1970-01-01T${startTime}:00`);
+    const end = new Date(`1970-01-01T${endTime}:00`);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: "Invalid time format" });
+    }
+    if (start >= end) {
+      return res.status(400).json({ message: "Start time must be before end time" });
     }
 
     const updateData = { name };
     if (specialization && specialization.trim().length > 0) {
       updateData.specialization = specialization;
     } else {
-      updateData.specialization = null; // Align with schema default
+      updateData.specialization = null;
     }
+    updateData.twoFAEnabled = twoFAEnabled === "true";
+    updateData.availability = { startTime, endTime, days: parsedDays };
+    console.log("Updating availability:", updateData.availability);
 
     if (req.file) {
       const filePath = path.join(uploadDir, req.file.filename);
@@ -133,14 +188,15 @@ router.put("/profile", upload, handleMulterError, async (req, res) => {
         console.error("File not found after upload:", filePath);
         return res.status(500).json({ message: "Failed to save profile picture" });
       }
-    } else {
-      console.log("No profile picture provided in request");
     }
 
-    const user = await User.findByIdAndUpdate(req.user.id, updateData, {
-      new: true,
-      runValidators: true,
-    }).select("-password -otp -otpExpires");
+    console.log("Before update - User:", await User.findById(req.user.id).select("twoFAEnabled availability"));
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).select("-password -otp -otpExpires");
+    console.log("After update - User:", await User.findById(req.user.id).select("twoFAEnabled availability"));
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -153,7 +209,9 @@ router.put("/profile", upload, handleMulterError, async (req, res) => {
       userId: user._id,
       name: user.name,
       specialization: user.specialization,
+      twoFAEnabled: user.twoFAEnabled,
       profilePicture: user.profilePicture,
+      availability: user.availability,
     });
     res.json({ message: "Profile updated successfully", user });
   } catch (err) {

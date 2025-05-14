@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
+import { logout } from "../redux/slices/authSlice";
 import {
   CalendarIcon,
   UserGroupIcon,
   ArrowRightOnRectangleIcon,
   PencilIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 
 export default function DoctorDashboard() {
@@ -13,25 +16,59 @@ export default function DoctorDashboard() {
     role: "",
     specialization: "",
     profilePicture: "",
+    twoFAEnabled: false,
+    availability: { startTime: "", endTime: "", days: [] },
   });
   const [editData, setEditData] = useState({
     name: "",
     specialization: "",
     profilePicture: null,
+    twoFAEnabled: false,
+    startTime: "",
+    endTime: "",
+    days: [],
   });
   const [previewUrl, setPreviewUrl] = useState("");
+  const [hasProfilePicture, setHasProfilePicture] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeSection, setActiveSection] = useState("appointments");
+  const [justUpdated, setJustUpdated] = useState(false);
   const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  // Available days for selection
+  const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+  // Normalize time to HH:mm format
+  const normalizeTime = (time) => {
+    if (!time || typeof time !== "string" || time.trim() === "") {
+      console.warn("Invalid or empty time, returning empty string:", time);
+      return "";
+    }
+    try {
+      const [hours, minutes] = time.split(":").slice(0, 2);
+      const normalized = `${hours.padStart(2, "0")}:${minutes.padStart(2, "0")}`;
+      console.log("Normalized time:", time, "->", normalized);
+      return normalized;
+    } catch (err) {
+      console.error("Error normalizing time:", time, err);
+      return time;
+    }
+  };
 
   // Fetch user data
   const fetchUserData = async () => {
+    if (justUpdated) {
+      console.log("Skipping fetchUserData due to recent update");
+      return;
+    }
     try {
       const token = localStorage.getItem("token");
       if (!token) {
-        navigate("/signin");
+        console.log("No token found, redirecting to signin");
+        navigate("/auth/signin");
         return;
       }
 
@@ -43,56 +80,106 @@ export default function DoctorDashboard() {
       });
 
       const data = await response.json();
-      console.log("Doctor dashboard user data:", data);
+      console.log("Raw backend response:", JSON.stringify(data, null, 2));
 
       if (!response.ok) {
+        console.error("Fetch user data failed:", data.message);
         setError(data.message || "Failed to fetch user data");
         localStorage.removeItem("token");
-        navigate("/signin");
+        navigate("/auth/signin");
         return;
       }
 
       if (data.role !== "doctor") {
+        console.error("Access denied: Not a doctor");
         setError("Access denied: Not a doctor");
         localStorage.removeItem("token");
-        navigate("/signin");
+        navigate("/auth/signin");
         return;
       }
 
-      setUserData({
+      const userInfo = {
         name: data.name || "",
         role: data.role || "",
         specialization: data.specialization || "",
         profilePicture: data.profilePicture || "",
-      });
+        twoFAEnabled: !!data.twoFAEnabled,
+        availability: {
+          startTime: data.availability?.startTime ? normalizeTime(data.availability.startTime) : "",
+          endTime: data.availability?.endTime ? normalizeTime(data.availability.endTime) : "",
+          days: data.availability?.days && Array.isArray(data.availability.days) ? data.availability.days : [],
+        },
+      };
+
+      setUserData(userInfo);
       setEditData({
         name: data.name || "",
         specialization: data.specialization || "",
         profilePicture: null,
+        twoFAEnabled: !!data.twoFAEnabled,
+        startTime: data.availability?.startTime ? normalizeTime(data.availability.startTime) : "",
+        endTime: data.availability?.endTime ? normalizeTime(data.availability.endTime) : "",
+        days: data.availability?.days && Array.isArray(data.availability.days) ? data.availability.days : [],
+      });
+      setHasProfilePicture(!!data.profilePicture);
+      setPreviewUrl("");
+      console.log("Set userData:", userInfo);
+      console.log("Set editData:", {
+        name: data.name,
+        startTime: data.availability?.startTime ? normalizeTime(data.availability.startTime) : "",
+        endTime: data.availability?.endTime ? normalizeTime(data.availability.endTime) : "",
+        days: data.availability?.days || [],
       });
     } catch (err) {
       console.error("Error fetching user data:", err);
       setError("Something went wrong. Please try again.");
       localStorage.removeItem("token");
-      navigate("/signin");
+      navigate("/auth/signin");
     }
   };
 
-  // Initial fetch
+  // Initial fetch and refresh on section change
   useEffect(() => {
     fetchUserData();
-  }, [navigate]);
+  }, [navigate, activeSection]);
+
+  // Reset justUpdated after fetchUserData runs
+  useEffect(() => {
+    if (justUpdated) {
+      setTimeout(() => setJustUpdated(false), 1000);
+    }
+  }, [justUpdated]);
 
   // Handle logout
   const handleLogout = () => {
+    console.log("Logging out");
     localStorage.removeItem("token");
-    navigate("/signin");
+    dispatch(logout());
+    navigate("/auth/signin");
   };
 
   // Handle form input changes
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setEditData((prev) => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    if (name === "days") {
+      setEditData((prev) => {
+        const newDays = checked
+          ? [...prev.days, value]
+          : prev.days.filter((day) => day !== value);
+        const newData = { ...prev, days: newDays };
+        console.log("Days changed, new editData:", newData);
+        return newData;
+      });
+    } else {
+      setEditData((prev) => {
+        const newData = {
+          ...prev,
+          [name]: type === "checkbox" ? checked : value,
+        };
+        console.log("Input changed, new editData:", newData);
+        return newData;
+      });
+    }
   };
 
   // Handle file input change and generate preview
@@ -102,10 +189,20 @@ export default function DoctorDashboard() {
     if (file) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
-      console.log("Selected file:", file.name, file.type, file.size);
+      setHasProfilePicture(true);
+      console.log("Selected file:", file.name);
     } else {
       setPreviewUrl("");
+      setHasProfilePicture(false);
     }
+  };
+
+  // Handle removing the profile picture
+  const handleRemovePicture = () => {
+    setEditData((prev) => ({ ...prev, profilePicture: null }));
+    setPreviewUrl("");
+    setHasProfilePicture(false);
+    console.log("Profile picture removed");
   };
 
   // Clean up preview URL to avoid memory leaks
@@ -124,21 +221,37 @@ export default function DoctorDashboard() {
     setSuccess("");
     setIsLoading(true);
 
+    // Validate time fields and days
+    if (!editData.startTime || !editData.endTime) {
+      setError("Please provide both start and end times.");
+      setIsLoading(false);
+      console.log("Validation failed, editData:", editData);
+      return;
+    }
+    if (!editData.days || editData.days.length === 0) {
+      setError("Please select at least one shift day.");
+      setIsLoading(false);
+      console.log("Validation failed, editData:", editData);
+      return;
+    }
+
     try {
       const token = localStorage.getItem("token");
       const formData = new FormData();
       formData.append("name", editData.name);
       formData.append("specialization", editData.specialization);
+      formData.append("twoFAEnabled", editData.twoFAEnabled.toString());
+      formData.append("startTime", editData.startTime);
+      formData.append("endTime", editData.endTime);
+      formData.append("days", JSON.stringify(editData.days));
       if (editData.profilePicture) {
         formData.append("profilePicture", editData.profilePicture);
         console.log("FormData includes profilePicture:", editData.profilePicture.name);
-      } else {
-        console.log("FormData: No profilePicture included");
       }
 
-      // Log FormData keys
+      console.log("Submitting FormData:");
       for (let [key, value] of formData.entries()) {
-        console.log(`FormData entry: ${key}=${value instanceof File ? value.name : value}`);
+        console.log(`  ${key}: ${value instanceof File ? value.name : value}`);
       }
 
       const response = await fetch("http://localhost:5000/api/doctor/profile", {
@@ -153,20 +266,42 @@ export default function DoctorDashboard() {
       console.log("Profile update response:", data);
 
       if (!response.ok) {
+        console.error("Profile update failed:", data.message);
         setError(data.message || "Failed to update profile");
         setIsLoading(false);
         return;
       }
 
-      // Refetch user data to ensure consistency
-      await fetchUserData();
-
-      setEditData({
-        name: data.user.name,
-        specialization: data.user.specialization,
+      // Update editData to preserve form values
+      setEditData((prev) => ({
+        ...prev,
+        name: editData.name,
+        specialization: editData.specialization,
         profilePicture: null,
-      });
-      setPreviewUrl("");
+        twoFAEnabled: editData.twoFAEnabled,
+        startTime: editData.startTime,
+        endTime: editData.endTime,
+        days: editData.days,
+      }));
+      console.log("Preserved editData after submission:", editData);
+
+      // Update userData with backend response
+      const updatedUserData = {
+        ...userData,
+        name: data.user.name || editData.name,
+        specialization: data.user.specialization || editData.specialization,
+        profilePicture: data.user.profilePicture || userData.profilePicture,
+        twoFAEnabled: data.user.twoFAEnabled || editData.twoFAEnabled,
+        availability: {
+          startTime: data.user.availability?.startTime || editData.startTime,
+          endTime: data.user.availability?.endTime || editData.endTime,
+          days: data.user.availability?.days || editData.days,
+        },
+      };
+      setUserData(updatedUserData);
+      console.log("Updated userData:", updatedUserData);
+
+      setJustUpdated(true);
       setSuccess("Profile updated successfully!");
     } catch (err) {
       console.error("Error updating profile:", err);
@@ -228,6 +363,7 @@ export default function DoctorDashboard() {
 
   // Render content based on active section
   const renderContent = () => {
+    console.log("Rendering edit-profile, current editData:", editData);
     switch (activeSection) {
       case "appointments":
         return (
@@ -301,93 +437,230 @@ export default function DoctorDashboard() {
       case "edit-profile":
         return (
           <div>
-            <h3 className="text-2xl font-semibold text-gray-800 mb-4">
+            <h3 className="text-2xl font-semibold text-gray-800 mb-6">
               Edit Profile
             </h3>
-            <div className="bg-white rounded-lg shadow p-6 max-w-md">
+            <div className="bg-white rounded-xl shadow-lg p-8 max-w-3xl">
               {success && (
-                <p className="text-green-600 bg-green-100 border border-green-400 rounded-md p-3 mb-4 font-semibold">
+                <p className="text-green-600 bg-green-50 border border-green-200 rounded-lg p-4 mb-6 font-medium animate-fade-in">
                   {success}
                 </p>
               )}
               {error && (
-                <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-4 font-semibold">
+                <p className="text-red-600 bg-red-50 border border-red-200 rounded-lg p-4 mb-6 font-medium animate-fade-in">
                   {error}
                 </p>
               )}
               <form onSubmit={handleProfileUpdate}>
-                <div className="mb-4">
-                  <label
-                    htmlFor="name"
-                    className="block text-gray-700 font-medium mb-2"
-                  >
-                    Name *
-                  </label>
-                  <input
-                    type="text"
-                    id="name"
-                    name="name"
-                    value={editData.name}
-                    onChange={handleInputChange}
-                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  {/* Left Column: Name and Specialization */}
+                  <div className="space-y-6">
+                    <div>
+                      <label
+                        htmlFor="name"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Name *
+                      </label>
+                      <input
+                        type="text"
+                        id="name"
+                        name="name"
+                        value={editData.name}
+                        onChange={handleInputChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="specialization"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Specialization
+                      </label>
+                      <input
+                        type="text"
+                        id="specialization"
+                        name="specialization"
+                        value={editData.specialization}
+                        onChange={handleInputChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
+                      />
+                    </div>
+                  </div>
+                  {/* Right Column: Start and End Time */}
+                  <div className="space-y-6">
+                    <div>
+                      <label
+                        htmlFor="startTime"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Availability Start Time
+                      </label>
+                      <input
+                        type="time"
+                        id="startTime"
+                        name="startTime"
+                        value={editData.startTime}
+                        onChange={handleInputChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="endTime"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Availability End Time
+                      </label>
+                      <input
+                        type="time"
+                        id="endTime"
+                        name="endTime"
+                        value={editData.endTime}
+                        onChange={handleInputChange}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="mb-4">
-                  <label
-                    htmlFor="specialization"
-                    className="block text-gray-700 font-medium mb-2"
-                  >
-                    Specialization
+                {/* Shift Days */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Shift Days
                   </label>
-                  <input
-                    type="text"
-                    id="specialization"
-                    name="specialization"
-                    value={editData.specialization}
-                    onChange={handleInputChange}
-                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="flex flex-wrap gap-2">
+                    {daysOfWeek.map((day) => (
+                      <label
+                        key={day}
+                        className={`flex items-center justify-center px-4 py-2 rounded-full border cursor-pointer transition-all duration-200 ${
+                          editData.days.includes(day)
+                            ? "bg-blue-500 text-white border-blue-500 shadow-md"
+                            : "bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          name="days"
+                          value={day}
+                          checked={editData.days.includes(day)}
+                          onChange={handleInputChange}
+                          className="sr-only"
+                        />
+                        {day}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div className="mb-4">
+                {/* Profile Picture */}
+                <div className="mb-6">
                   <label
                     htmlFor="profilePicture"
-                    className="block text-gray-700 font-medium mb-2"
+                    className="block text-sm font-medium text-gray-700 mb-2"
                   >
                     Profile Picture
                   </label>
-                  {(previewUrl || (userData.profilePicture && userData.profilePicture !== "")) && (
-                    <div className="mb-2">
+                  {hasProfilePicture && (previewUrl || userData.profilePicture) && (
+                    <div className="relative mb-4 w-24 h-24">
                       <img
                         src={
                           previewUrl ||
                           `http://localhost:5000${userData.profilePicture}?t=${Date.now()}`
                         }
                         alt="Profile Preview"
-                        className="w-24 h-24 rounded-full object-cover"
+                        className="w-24 h-24 rounded-full object-cover border-2 border-gray-200 shadow-sm"
                         onError={(e) => console.error("Image load error:", userData.profilePicture, e)}
                       />
+                      <button
+                        type="button"
+                        onClick={handleRemovePicture}
+                        className="absolute top-[-8px] right-[-8px] bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-transform transform hover:scale-110"
+                        title="Remove Picture"
+                      >
+                        <XMarkIcon className="w-4 h-4" />
+                      </button>
                     </div>
                   )}
-                  <input
-                    type="file"
-                    id="profilePicture"
-                    name="profilePicture"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="w-full p-2 border rounded-md"
-                  />
+                  {!hasProfilePicture && (
+                    <input
+                      type="file"
+                      id="profilePicture"
+                      name="profilePicture"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="w-full p-3 border border-gray-300 rounded-lg file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 transition-shadow hover:shadow-sm"
+                    />
+                  )}
                 </div>
+                {/* Two-Factor Authentication */}
+                <div className="mb-6 flex items-center space-x-4">
+                  <label
+                    htmlFor="twoFAEnabled"
+                    className="text-sm font-medium text-gray-700"
+                  >
+                    Two-Factor Authentication
+                  </label>
+                  <div className="relative inline-block w-12 h-6">
+                    <input
+                      type="checkbox"
+                      id="twoFAEnabled"
+                      name="twoFAEnabled"
+                      checked={editData.twoFAEnabled}
+                      onChange={handleInputChange}
+                      className="absolute opacity-0 w-full h-full cursor-pointer"
+                    />
+                    <div
+                      className={`w-full h-full rounded-full transition-colors duration-200 ${
+                        editData.twoFAEnabled ? "bg-blue-500" : "bg-gray-300"
+                      }`}
+                    ></div>
+                    <div
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-200 ${
+                        editData.twoFAEnabled ? "translate-x-6" : "translate-x-0"
+                      }`}
+                    ></div>
+                  </div>
+                </div>
+                {/* Submit Button */}
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className={`w-full p-2 rounded-md text-white transition ${
+                  className={`w-full p-3 rounded-lg text-white font-semibold transition-all duration-200 ${
                     isLoading
                       ? "bg-gray-400 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-700"
+                      : "bg-blue-600 hover:bg-blue-700 hover:shadow-lg"
                   }`}
                 >
-                  {isLoading ? "Updating..." : "Update Profile"}
+                  {isLoading ? (
+                    <span className="flex items-center justify-center">
+                      <svg
+                        className="animate-spin h-5 w-5 mr-2 text-white"
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        ></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                        ></path>
+                      </svg>
+                      Updating...
+                    </span>
+                  ) : (
+                    "Update Profile"
+                  )}
                 </button>
               </form>
             </div>
@@ -400,7 +673,21 @@ export default function DoctorDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex">
-      {/* Sidebar */}
+      <style jsx>{`
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in {
+          animation: fadeIn 0.3s ease-out;
+        }
+      `}</style>
       <div className="w-64 bg-white shadow-lg p-6 flex flex-col justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-8">
@@ -442,14 +729,12 @@ export default function DoctorDashboard() {
         </div>
         <button
           onClick={handleLogout}
-          className="flex items-center p-3 text-white rounded-lg bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 focus:ring-4 focus:ring-red-300 transition-all duration-300"
+          className="flex items-center p-3 text-white bg-red-600 rounded-lg hover:bg-red-700 transition"
         >
           <ArrowRightOnRectangleIcon className="w-6 h-6 mr-3" />
           Logout
         </button>
       </div>
-
-      {/* Main Content */}
       <div className="flex-1 p-8">
         <div className="max-w-5xl mx-auto">
           <div className="mb-8 flex items-center space-x-4">
@@ -462,21 +747,29 @@ export default function DoctorDashboard() {
               />
             )}
             <div>
-              <h1 className="text-3xl font-extrabold text-gray-800">
+              <h1 className="text-3xl font-bold text-gray-800">
                 Welcome, Dr. {userData.name || "Loading..."}!
               </h1>
               <p className="text-gray-600">
                 Manage your practice efficiently from your dashboard.
               </p>
               {userData.specialization && (
-                <p className="text-blue-700 font-medium mt-1">
+                <p className="text-blue-600 mt-1">
                   Specialization: {userData.specialization}
                 </p>
               )}
+              {userData.availability?.startTime &&
+                userData.availability?.endTime &&
+                userData.availability?.days?.length > 0 && (
+                  <p className="text-blue-600 mt-1">
+                    Availability: {userData.availability.days.join(", ")},{" "}
+                    {userData.availability.startTime} - {userData.availability.endTime}
+                  </p>
+                )}
             </div>
           </div>
           {error && (
-            <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-6 font-semibold text-base">
+            <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-6">
               {error}
             </p>
           )}

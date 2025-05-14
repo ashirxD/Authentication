@@ -117,6 +117,36 @@ export default function Signin() {
           return;
         }
 
+        // Handle direct sign-in (twoFAEnabled: false)
+        if (data.token) {
+          const userRole = data.role || (data.user && data.user.role);
+          if (!userRole) {
+            dispatch(loginFailure("Invalid response: missing role"));
+            setErrors({ server: "Invalid response from server: missing role" });
+            return;
+          }
+          localStorage.setItem("token", data.token);
+          console.log("[Signin] Token stored:", {
+            token: data.token,
+            role: userRole,
+            email: formData.email,
+          });
+          dispatch(
+            loginSuccess({
+              user: data.user || data,
+              role: userRole,
+              isEmailVerified: data.isEmailVerified || true,
+            })
+          );
+          console.log("[Signin] Direct login success:", { role: userRole });
+          setFormData({ email: "", password: "", otp: "" });
+          const dashboardPath = userRole === "doctor" ? "/doctor-dashboard" : "/patient-dashboard";
+          console.log("[Signin] Navigating to:", dashboardPath);
+          navigate(dashboardPath);
+          return;
+        }
+
+        // Handle OTP flow (twoFAEnabled: true)
         if (!data.pendingToken) {
           dispatch(loginFailure("No pending token received from server"));
           setErrors({ server: "No pending token received from server" });
@@ -259,7 +289,6 @@ export default function Signin() {
     }
   };
 
-  // Rest of your JSX remains unchanged
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 transform transition-all hover:shadow-2xl">

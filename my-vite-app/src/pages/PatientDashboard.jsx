@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useDispatch } from "react-redux";
+import { logout } from "../redux/slices/authSlice";
 import {
   CalendarIcon,
   DocumentTextIcon,
   ArrowRightOnRectangleIcon,
   PencilIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 
 export default function PatientDashboard() {
@@ -12,83 +15,110 @@ export default function PatientDashboard() {
     name: "",
     role: "",
     profilePicture: "",
+    twoFAEnabled: false,
   });
   const [editData, setEditData] = useState({
     name: "",
     profilePicture: null,
+    twoFAEnabled: false,
   });
   const [previewUrl, setPreviewUrl] = useState("");
+  const [hasProfilePicture, setHasProfilePicture] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeSection, setActiveSection] = useState("appointments");
   const navigate = useNavigate();
+  const dispatch = useDispatch();
 
-  // Fetch user data and enforce patient-only access
-  useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        if (!token) {
-          navigate("/signin");
-          return;
-        }
-
-        const response = await fetch("http://localhost:5000/api/patient/user", {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const data = await response.json();
-        console.log("Patient dashboard user data:", data);
-
-        if (!response.ok) {
-          setError(data.message || "Failed to fetch user data");
-          localStorage.removeItem("token");
-          navigate("/signin");
-          return;
-        }
-
-        if (data.role !== "patient") {
-          setError("Access denied: Not a patient");
-          localStorage.removeItem("token");
-          navigate("/signin");
-          return;
-        }
-
-        setUserData({
-          name: data.name || "",
-          role: data.role || "",
-          profilePicture: data.profilePicture || "",
-        });
-        setEditData({
-          name: data.name || "",
-          profilePicture: null,
-        });
-      } catch (err) {
-        console.error("Error fetching user data:", err);
-        setError("Something went wrong. Please try again.");
-        localStorage.removeItem("token");
-        navigate("/signin");
+  // Fetch user data
+  const fetchUserData = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("No token found, redirecting to signin");
+        navigate("/auth/signin");
+        return;
       }
-    };
 
+      console.log("Fetching user data with token:", token);
+      const response = await fetch("http://localhost:5000/api/patient/user", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+      console.log("Fetch user data response:", data);
+
+      if (!response.ok) {
+        console.error("Fetch user data failed:", data.message);
+        setError(data.message || "Failed to fetch user data");
+        localStorage.removeItem("token");
+        navigate("/auth/signin");
+        return;
+      }
+
+      if (data.role !== "patient") {
+        console.error("Access denied: Not a patient");
+        setError("Access denied: Not a patient");
+        localStorage.removeItem("token");
+        navigate("/auth/signin");
+        return;
+      }
+
+      const userInfo = {
+        name: data.name || "",
+        role: data.role || "",
+        profilePicture: data.profilePicture || "",
+        twoFAEnabled: !!data.twoFAEnabled,
+      };
+
+      setUserData(userInfo);
+      setEditData({
+        name: data.name || "",
+        profilePicture: null,
+        twoFAEnabled: !!data.twoFAEnabled,
+      });
+      setHasProfilePicture(!!data.profilePicture);
+      setPreviewUrl("");
+      console.log("Set editData.twoFAEnabled:", data.twoFAEnabled);
+    } catch (err) {
+      console.error("Error fetching user data:", err);
+      setError("Something went wrong. Please try again.");
+      localStorage.removeItem("token");
+      navigate("/auth/signin");
+    }
+  };
+
+  // Initial fetch and refresh on section change
+  useEffect(() => {
     fetchUserData();
-  }, [navigate]);
+  }, [navigate, activeSection]);
 
   // Handle logout
   const handleLogout = () => {
-    console.log("Logout button clicked");
+    console.log("Logging out");
     localStorage.removeItem("token");
-    navigate("/signin");
+    dispatch(logout());
+    navigate("/auth/signin");
   };
 
   // Handle form input changes
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setEditData((prev) => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    setEditData((prev) => {
+      const newData = {
+        ...prev,
+        [name]: type === "checkbox" ? checked : value,
+      };
+      console.log("Updated editData:", newData);
+      if (name === "twoFAEnabled") {
+        console.log(`Toggle changed to: ${checked ? "ON" : "OFF"}`);
+      }
+      return newData;
+    });
   };
 
   // Handle file input change and generate preview
@@ -98,10 +128,20 @@ export default function PatientDashboard() {
     if (file) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
-      console.log("Selected file:", file.name, file.type, file.size);
+      setHasProfilePicture(true);
+      console.log("Selected file:", file.name);
     } else {
       setPreviewUrl("");
+      setHasProfilePicture(false);
     }
+  };
+
+  // Handle removing the profile picture
+  const handleRemovePicture = () => {
+    setEditData((prev) => ({ ...prev, profilePicture: null }));
+    setPreviewUrl("");
+    setHasProfilePicture(false);
+    console.log("Profile picture removed");
   };
 
   // Clean up preview URL to avoid memory leaks
@@ -124,11 +164,10 @@ export default function PatientDashboard() {
       const token = localStorage.getItem("token");
       const formData = new FormData();
       formData.append("name", editData.name);
+      formData.append("twoFAEnabled", editData.twoFAEnabled.toString());
       if (editData.profilePicture) {
         formData.append("profilePicture", editData.profilePicture);
         console.log("FormData includes profilePicture:", editData.profilePicture.name);
-      } else {
-        console.log("FormData: No profilePicture included");
       }
 
       for (let [key, value] of formData.entries()) {
@@ -147,23 +186,13 @@ export default function PatientDashboard() {
       console.log("Profile update response:", data);
 
       if (!response.ok) {
+        console.error("Profile update failed:", data.message);
         setError(data.message || "Failed to update profile");
         setIsLoading(false);
         return;
       }
 
-      setUserData({
-        ...userData,
-        name: data.user.name,
-        profilePicture: data.user.profilePicture
-          ? `${data.user.profilePicture}?t=${Date.now()}`
-          : "",
-      });
-      setEditData({
-        name: data.user.name,
-        profilePicture: null,
-      });
-      setPreviewUrl("");
+      await fetchUserData();
       setSuccess("Profile updated successfully!");
     } catch (err) {
       console.error("Error updating profile:", err);
@@ -233,7 +262,11 @@ export default function PatientDashboard() {
               <h3 className="text-2xl font-semibold text-gray-800">
                 Upcoming Appointments
               </h3>
-              <button className="p-2 text-white rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:ring-4 focus:ring-blue-300 transition-all duration-300">
+              {/* Updated to navigate to BookAppointment page */}
+              <button
+                onClick={() => navigate("/book-appointment")}
+                className="p-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition"
+              >
                 Book Appointment
               </button>
             </div>
@@ -304,12 +337,12 @@ export default function PatientDashboard() {
             </h3>
             <div className="bg-white rounded-lg shadow p-6 max-w-md">
               {success && (
-                <p className="text-green-600 bg-green-100 border border-green-400 rounded-md p-3 mb-4 font-semibold">
+                <p className="text-green-600 bg-green-100 border border-green-400 rounded p-3 mb-4">
                   {success}
                 </p>
               )}
               {error && (
-                <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-4 font-semibold">
+                <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4">
                   {error}
                 </p>
               )}
@@ -327,7 +360,7 @@ export default function PatientDashboard() {
                     name="name"
                     value={editData.name}
                     onChange={handleInputChange}
-                    className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
@@ -338,8 +371,9 @@ export default function PatientDashboard() {
                   >
                     Profile Picture
                   </label>
-                  {(previewUrl || (userData.profilePicture && userData.profilePicture !== "")) && (
-                    <div className="mb-2">
+                  {/* Updated cross icon position to top-right with slight overlap */}
+                  {hasProfilePicture && (previewUrl || userData.profilePicture) && (
+                    <div className="relative mb-2 w-24 h-24">
                       <img
                         src={
                           previewUrl ||
@@ -349,21 +383,53 @@ export default function PatientDashboard() {
                         className="w-24 h-24 rounded-full object-cover"
                         onError={(e) => console.error("Image load error:", userData.profilePicture, e)}
                       />
+                      <button
+                        type="button"
+                        onClick={handleRemovePicture}
+                        className="absolute top-[-8px] right-[-8px] bg-red-600 text-white rounded-full p-1 hover:bg-red-700 transition"
+                        title="Remove Picture"
+                      >
+                        <XMarkIcon className="w-4 h-4" />
+                      </button>
                     </div>
                   )}
-                  <input
-                    type="file"
-                    id="profilePicture"
-                    name="profilePicture"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="w-full p-2 border rounded-md"
-                  />
+                  {!hasProfilePicture && (
+                    <input
+                      type="file"
+                      id="profilePicture"
+                      name="profilePicture"
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="w-full p-2 border rounded"
+                    />
+                  )}
+                </div>
+                <div className="mb-4 flex items-center">
+                  <label
+                    htmlFor="twoFAEnabled"
+                    className="text-gray-700 font-medium mr-3"
+                  >
+                    Two-Factor Authentication
+                  </label>
+                  <div className="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+                    <input
+                      type="checkbox"
+                      id="twoFAEnabled"
+                      name="twoFAEnabled"
+                      checked={editData.twoFAEnabled}
+                      onChange={handleInputChange}
+                      className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
+                    />
+                    <label
+                      htmlFor="twoFAEnabled"
+                      className="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"
+                    ></label>
+                  </div>
                 </div>
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className={`w-full p-2 rounded-md text-white transition ${
+                  className={`w-full p-2 rounded text-white ${
                     isLoading
                       ? "bg-gray-400 cursor-not-allowed"
                       : "bg-blue-600 hover:bg-blue-700"
@@ -381,45 +447,64 @@ export default function PatientDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex">
-      {/* Sidebar */}
-      <div className="w-64 bg-white shadow-lg p-6 flex flex-col justify-between h-screen sticky top-0">
+    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-pink-100 flex">
+      <style jsx>{`
+        .toggle-checkbox {
+          appearance: none;
+          position: absolute;
+          width: 24px;
+          height: 24px;
+          border-radius: 9999px;
+          background: white;
+          border: 4px solid #d1d5db;
+          cursor: pointer;
+          transition: all 0.2s ease-in;
+        }
+        .toggle-checkbox:checked {
+          right: 0;
+          border-color: #2563eb;
+        }
+        .toggle-label {
+          display: block;
+          overflow-hidden;
+          height: 24px;
+          border-radius: 9999px;
+          background: #d1d5db;
+          cursor: pointer;
+          transition: background-color 0.2s ease-in;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+          background: #2563eb;
+        }
+      `}</style>
+      <div className="w-64 bg-white shadow p-6 flex flex-col justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-8">
             Patient Dashboard
           </h2>
           <nav className="space-y-2">
             <button
-              key="appointments"
               onClick={() => setActiveSection("appointments")}
-              className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-                activeSection === "appointments"
-                  ? "bg-blue-100 text-blue-600"
-                  : ""
+              className={`w-full flex items-center p-3 rounded text-gray-700 hover:bg-blue-100 ${
+                activeSection === "appointments" ? "bg-blue-100 text-blue-600" : ""
               }`}
             >
               <CalendarIcon className="w-6 h-6 mr-3" />
               Appointments
             </button>
             <button
-              key="medicalRecords"
               onClick={() => setActiveSection("medicalRecords")}
-              className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-                activeSection === "medicalRecords"
-                  ? "bg-blue-100 text-blue-600"
-                  : ""
+              className={`w-full flex items-center p-3 rounded text-gray-700 hover:bg-blue-100 ${
+                activeSection === "medicalRecords" ? "bg-blue-100 text-blue-600" : ""
               }`}
             >
-              <DocumentTextIcon className="w6 h-6 mr-3" />
+              <DocumentTextIcon className="w-6 h-6 mr-3" />
               Medical Records
             </button>
             <button
-              key="edit-profile"
               onClick={() => setActiveSection("edit-profile")}
-              className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-                activeSection === "edit-profile"
-                  ? "bg-blue-100 text-blue-600"
-                  : ""
+              className={`w-full flex items-center p-3 rounded text-gray-700 hover:bg-blue-100 ${
+                activeSection === "edit-profile" ? "bg-blue-100 text-blue-600" : ""
               }`}
             >
               <PencilIcon className="w-6 h-6 mr-3" />
@@ -429,14 +514,12 @@ export default function PatientDashboard() {
         </div>
         <button
           onClick={handleLogout}
-          className="flex items-center p-3 text-white rounded-lg bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 focus:ring-4 focus:ring-red-300 transition-all duration-300 z-10"
+          className="flex items-center p-3 text-white bg-red-600 rounded hover:bg-red-700 transition"
         >
           <ArrowRightOnRectangleIcon className="w-6 h-6 mr-3" />
           Logout
         </button>
       </div>
-
-      {/* Main Content */}
       <div className="flex-1 p-8">
         <div className="max-w-5xl mx-auto">
           <div className="mb-8 flex items-center space-x-4">
@@ -449,7 +532,7 @@ export default function PatientDashboard() {
               />
             )}
             <div>
-              <h1 className="text-3xl font-extrabold text-gray-800">
+              <h1 className="text-3xl font-bold text-gray-800">
                 Welcome, {userData.name || "Loading..."}!
               </h1>
               <p className="text-gray-600">
@@ -458,7 +541,7 @@ export default function PatientDashboard() {
             </div>
           </div>
           {error && (
-            <p className="text-red-600 bg-red-100 border border-red-400 rounded-md p-3 mb-6 font-semibold text-base">
+            <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-6">
               {error}
             </p>
           )}

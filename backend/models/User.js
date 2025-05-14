@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
-const userSchema = new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, "Name is required"],
@@ -10,7 +11,9 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: [true, "Email is required"],
     unique: true,
-    match: [/\S+@\S+\.\S+/],
+    trim: true,
+    lowercase: true,
+    match: [/.+\@.+\..+/, "Please fill a valid email address"],
   },
   password: {
     type: String,
@@ -19,22 +22,48 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    required: true,
-    enum: ["doctor", "patient"],
-    default: "patient",
+    enum: ["patient", "doctor", "admin"],
+    required: [true, "Role is required"],
   },
   specialization: {
     type: String,
-    default: null,
+    trim: true,
   },
-  profilePicture: { type: String },
+  profilePicture: {
+    type: String,
+    trim: true,
+  },
+  twoFAEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  availability: {
+    startTime: { type: String },
+    endTime: { type: String },
+    days: [{ type: String, enum: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] }],
+  },
   otp: {
     type: String,
   },
   otpExpires: {
     type: Date,
   },
-  isEmailVerified: { type: Boolean, default: false }, // New field
+  isEmailVerified: {
+    type: Boolean,
+    default: false,
+  },
 });
 
-module.exports = mongoose.model("User", userSchema);
+// Hash password before saving
+UserSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = mongoose.model("User", UserSchema);

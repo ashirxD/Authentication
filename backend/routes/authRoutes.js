@@ -66,13 +66,7 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-router.get('/test', async (req, res) => {
-
-    console.log('test route hit');
-    res.json({ message: 'Test route hit' });
-});
-
-// Signin Route (unchanged)
+// Signin Route
 router.post('/signin', async (req, res) => {
   const { email, password } = req.body;
   try {
@@ -90,44 +84,55 @@ router.post('/signin', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    const otp = generateOTP();
-    const otpExpires = Date.now() + 10 * 60 * 1000;
-    user.otp = otp;
-    user.otpExpires = otpExpires;
-    await user.save();
+    console.log("Signin - User:", { email, twoFAEnabled: user.twoFAEnabled });
 
-    const pendingToken = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '10m' }
-    );
+    if (user.twoFAEnabled) {
+      const otp = generateOTP();
+      const otpExpires = Date.now() + 10 * 60 * 1000;
+      user.otp = otp;
+      user.otpExpires = otpExpires;
+      await user.save();
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: '2FA OTP for Sign In',
-      text: `Your OTP for signing in is: ${otp}. It is valid for 10 minutes.`,
-    };
-    try {
-      const info = await transporter.sendMail(mailOptions);
-      console.log('OTP email sent:', info);
-    } catch (emailErr) {
-      console.error('Signin OTP email error:', {
-        message: emailErr.message,
-        code: emailErr.code,
-        response: emailErr.response,
-      });
-      return res.status(500).json({ message: 'Failed to send OTP email', error: emailErr.message });
+      const pendingToken = jwt.sign(
+        { id: user._id, email: user.email, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '10m' }
+      );
+
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: '2FA OTP for Sign In',
+        text: `Your OTP for signing in is: ${otp}. It is valid for 10 minutes.`,
+      };
+      try {
+        const info = await transporter.sendMail(mailOptions);
+        console.log('OTP email sent:', info);
+        return res.json({ pendingToken, message: 'OTP sent to your email' });
+      } catch (emailErr) {
+        console.error('Signin OTP email error:', {
+          message: emailErr.message,
+          code: emailErr.code,
+          response: emailErr.response,
+        });
+        return res.status(500).json({ message: 'Failed to send OTP email', error: emailErr.message });
+      }
+    } else {
+      const token = jwt.sign(
+        { id: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      console.log("Signin - Issued JWT for user:", user._id);
+      return res.json({ token, role: user.role, message: 'Signin successful' });
     }
-
-    res.json({ pendingToken, message: 'OTP sent to your email' });
   } catch (err) {
     console.error('Signin error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Verify OTP Route (updated)
+// Verify OTP Route (unchanged)
 router.post('/verify-otp', async (req, res) => {
   const { email, otp, pendingToken } = req.body;
   try {

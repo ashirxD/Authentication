@@ -1,4 +1,3 @@
-// src/redux/slices/authSlice.js
 import { createSlice } from '@reduxjs/toolkit';
 
 const initialState = {
@@ -10,7 +9,7 @@ const initialState = {
   error: null,
   showOtpInput: false,
   pendingToken: '',
-  signupSuccessMessage: '', // For signup success messages
+  signupSuccessMessage: '',
 };
 
 const authSlice = createSlice({
@@ -24,7 +23,10 @@ const authSlice = createSlice({
     verifyTokenSuccess(state, action) {
       state.loading = false;
       state.isAuthenticated = true;
-      state.user = action.payload.user;
+      state.user = {
+        ...action.payload.user,
+        availability: action.payload.user.availability || { startTime: "", endTime: "", days: [] },
+      };
       state.role = action.payload.role;
       state.isEmailVerified = action.payload.isEmailVerified;
     },
@@ -43,8 +45,8 @@ const authSlice = createSlice({
     },
     loginSuccess(state, action) {
       state.loading = false;
-      state.showOtpInput = true;
-      state.pendingToken = action.payload.pendingToken;
+      state.showOtpInput = !!action.payload.pendingToken;
+      state.pendingToken = action.payload.pendingToken || '';
     },
     loginFailure(state, action) {
       state.loading = false;
@@ -55,7 +57,10 @@ const authSlice = createSlice({
     verifyOtpSuccess(state, action) {
       state.loading = false;
       state.isAuthenticated = true;
-      state.user = action.payload.user;
+      state.user = {
+        ...action.payload.user,
+        availability: action.payload.user.availability || { startTime: "", endTime: "", days: [] },
+      };
       state.role = action.payload.role;
       state.isEmailVerified = action.payload.isEmailVerified;
       state.showOtpInput = false;
@@ -101,6 +106,11 @@ const authSlice = createSlice({
       state.loading = false;
       state.error = action.payload;
     },
+    updateAvailability(state, action) {
+      if (state.user) {
+        state.user.availability = action.payload;
+      }
+    },
     logout(state) {
       state.user = null;
       state.isAuthenticated = false;
@@ -131,6 +141,7 @@ export const {
   signupFailure,
   verifyEmailSuccess,
   verifyEmailFailure,
+  updateAvailability,
   logout,
 } = authSlice.actions;
 export default authSlice.reducer;
