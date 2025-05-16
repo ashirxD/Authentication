@@ -1,3 +1,4 @@
+// src/pages/Signin.jsx
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSelector, useDispatch } from "react-redux";
@@ -85,7 +86,8 @@ export default function Signin() {
     return newErrors;
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     const validationErrors = validate();
     console.log("[Signin] Form submitted:", { formData, validationErrors });
     if (Object.keys(validationErrors).length > 0) {
@@ -257,6 +259,7 @@ export default function Signin() {
   const handleResendOtp = async () => {
     dispatch(resendOtpStart());
     try {
+      console.log('[Signin] Resending OTP for:', formData.email);
       const response = await fetch('http://localhost:5000/api/email/resend-otp', {
         method: 'POST',
         headers: {
@@ -297,7 +300,7 @@ export default function Signin() {
         </h2>
         <p className="text-center text-sm text-gray-600 mb-6">
           Don't have an account?{" "}
-          <Link to="/" className="text-blue-600 font-medium hover:text-blue-800 transition-colors">
+          <Link to="/auth/signup" className="text-blue-600 font-medium hover:text-blue-800 transition-colors">
             Sign Up
           </Link>
         </p>
@@ -308,7 +311,7 @@ export default function Signin() {
             {error === "Please verify your email before signing in" && (
               <p className="mt-2">
                 <Link
-                  to="/verify-email"
+                  to="/auth/verify-email"
                   className="text-blue-600 font-medium hover:text-blue-800 transition-colors"
                 >
                   Verify your email now
@@ -318,7 +321,7 @@ export default function Signin() {
           </div>
         )}
 
-        <div className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
           {!showOtpInput ? (
             <>
               <div>
@@ -408,7 +411,7 @@ export default function Signin() {
 
                 <div className="text-sm">
                   <Link
-                    to="/forgetpass"
+                    to="/auth/forgetpass"
                     className="text-blue-600 font-medium hover:text-blue-800 transition-colors"
                   >
                     Forgot your password?
@@ -464,8 +467,7 @@ export default function Signin() {
 
           <div>
             <button
-              type="button"
-              onClick={handleSubmit}
+              type="submit"
               disabled={loading || (showOtpInput && timeLeft <= 0)}
               className={`w-full p-3 text-white rounded-lg shadow-md transition-all duration-300 ${
                 loading || (showOtpInput && timeLeft <= 0)
@@ -482,7 +484,7 @@ export default function Signin() {
                 : "Sign In"}
             </button>
           </div>
-        </div>
+        </form>
 
         <div className="mt-6">
           <div className="relative">

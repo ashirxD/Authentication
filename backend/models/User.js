@@ -1,69 +1,41 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
-const UserSchema = new mongoose.Schema({
-  name: {
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, enum: ["doctor", "patient"], required: true },
+  specialization: { type: String },
+  profilePicture: { type: String, default: null },
+  isEmailVerified: { type: Boolean, default: false },
+  otp: { type: String },
+  otpExpires: { type: Date },
+  twoFAEnabled: { type: Boolean, default: false },
+  phoneNumber: {
     type: String,
-    required: [true, "Name is required"],
-    trim: true,
-  },
-  email: {
-    type: String,
-    required: [true, "Email is required"],
     unique: true,
-    trim: true,
-    lowercase: true,
-    match: [/.+\@.+\..+/, "Please fill a valid email address"],
-  },
-  password: {
-    type: String,
-    required: [true, "Password is required"],
-    minlength: [6, "Password must be at least 6 characters"],
-  },
-  role: {
-    type: String,
-    enum: ["patient", "doctor", "admin"],
-    required: [true, "Role is required"],
-  },
-  specialization: {
-    type: String,
-    trim: true,
-  },
-  profilePicture: {
-    type: String,
-    trim: true,
-  },
-  twoFAEnabled: {
-    type: Boolean,
-    default: false,
+    sparse: true, // Allows multiple null/undefined values
+    match: [
+      /^\+?\d{1,4}[-.\s]?\(?\d{1,3}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}$/,
+      "Invalid phone number format (e.g., +1234567890, 123-456-7890)",
+    ],
+    default: null,
   },
   availability: {
-    startTime: { type: String },
-    endTime: { type: String },
-    days: [{ type: String, enum: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] }],
+    startTime: { type: String, default: "" },
+    endTime: { type: String, default: "" },
+    days: { type: [String], default: [] },
   },
-  otp: {
-    type: String,
-  },
-  otpExpires: {
-    type: Date,
-  },
-  isEmailVerified: {
-    type: Boolean,
-    default: false,
-  },
-});
+}, { timestamps: true });
 
 // Hash password before saving
-UserSchema.pre("save", async function (next) {
+userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
+  console.log("[User] Hashing password for:", this.email);
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
 });
 
-module.exports = mongoose.model("User", UserSchema);
+module.exports = mongoose.model("User", userSchema);

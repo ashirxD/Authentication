@@ -4,34 +4,35 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const User = require("../models/User");
+const AppointmentRequest = require("../models/AppointmentRequest");
+const Appointment = require("../models/Appointment");
 
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, "../Uploads");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
-  console.log("Created uploads directory:", uploadDir);
+  console.log("[init] Created uploads directory:", uploadDir);
 } else {
-  console.log("Uploads directory exists:", uploadDir);
+  console.log("[init] Uploads directory exists:", uploadDir);
 }
 
 // Verify write permissions
 try {
   fs.accessSync(uploadDir, fs.constants.W_OK);
-  console.log("Uploads directory is writable");
+  console.log("[init] Uploads directory is writable");
 } catch (err) {
-  console.error("Uploads directory is not writable:", err);
-  throw new Error("Cannot write to uploads directory");
+  console.error("[init] Uploads directory is not writable:", err);
 }
 
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    console.log("Multer destination:", uploadDir);
+    console.log("[multer] Destination:", uploadDir);
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const filename = `${Date.now()}-${file.originalname}`;
-    console.log("Saving file to:", path.join(uploadDir, filename));
+    console.log("[multer] Saving file to:", path.join(uploadDir, filename));
     cb(null, filename);
   },
 });
@@ -51,7 +52,7 @@ const upload = multer({
 // Middleware to handle Multer errors
 const handleMulterError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    console.error("Multer error:", {
+    console.error("[multerError] Multer error:", {
       message: err.message,
       code: err.code,
       field: err.field,
@@ -59,11 +60,11 @@ const handleMulterError = (err, req, res, next) => {
     return res.status(400).json({ message: `Multer error: ${err.message}` });
   }
   if (err) {
-    console.error("File upload error:", {
+    console.error("[multerError] File upload error:", {
       message: err.message,
       stack: err.stack,
     });
-    return res.status(400).json({ message: `File upload error: ${err.message}` });
+    return res.status(400).json({ message: err.message });
   }
   next();
 };
@@ -72,24 +73,27 @@ const handleMulterError = (err, req, res, next) => {
 router.get("/user", async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
+      console.error("[GET /user] Unauthorized: No user ID");
       return res.status(401).json({ message: "Unauthorized: Invalid user" });
     }
     const user = await User.findById(req.user.id).select("-password -otp -otpExpires");
     if (!user) {
+      console.error("[GET /user] User not found:", req.user.id);
       return res.status(404).json({ message: "User not found" });
     }
     if (user.role !== "doctor") {
+      console.error("[GET /user] Access denied: Not a doctor:", user.role);
       return res.status(403).json({ message: "Access denied: Not a doctor" });
     }
-    console.log("Fetched user data:", {
+    console.log("[GET /user] Fetched user:", {
       id: user._id,
       name: user.name,
+      specialization: user.specialization,
       twoFAEnabled: user.twoFAEnabled,
-      availability: user.availability,
     });
     res.json(user);
   } catch (err) {
-    console.error("Error in GET /user:", {
+    console.error("[GET /user] Error:", {
       message: err.message,
       stack: err.stack,
     });
@@ -101,128 +105,276 @@ router.get("/user", async (req, res) => {
 router.put("/profile", upload, handleMulterError, async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
+      console.error("[PUT /profile] Unauthorized: No user ID");
       return res.status(401).json({ message: "Unauthorized: Invalid user" });
     }
 
     const { name, specialization, twoFAEnabled, startTime, endTime, days } = req.body;
-    console.log("Received profile update:", {
+    console.log("[PUT /profile] Received:", {
       name,
       specialization,
       twoFAEnabled,
       startTime,
       endTime,
       days,
-      type: typeof twoFAEnabled,
+      file: req.file ? req.file.filename : null,
     });
 
     if (!name || name.trim().length === 0) {
+      console.error("[PUT /profile] Validation failed: Name required");
       return res.status(400).json({ message: "Name is required" });
     }
-    if (twoFAEnabled === undefined) {
-      console.log("twoFAEnabled missing");
-      return res.status(400).json({ message: "twoFAEnabled is required" });
-    }
 
-    // Validate availability times and days
-    let parsedDays = [];
-    if (days) {
-      try {
-        parsedDays = JSON.parse(days);
-        if (!Array.isArray(parsedDays) || parsedDays.length === 0) {
-          return res.status(400).json({ message: "At least one shift day is required" });
-        }
-        const validDays = [
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-          "Sunday",
-        ];
-        if (!parsedDays.every((day) => validDays.includes(day))) {
-          return res.status(400).json({ message: "Invalid day names provided" });
-        }
-      } catch (err) {
-        return res.status(400).json({ message: "Invalid days format" });
-      }
-    } else {
-      return res.status(400).json({ message: "Shift days are required" });
-    }
-
-    if (!startTime || !endTime) {
-      return res.status(400).json({ message: "Start and end times are required" });
-    }
-
-    // Validate time format (HH:mm)
-    const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
-    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
-      return res.status(400).json({ message: "Invalid time format (use HH:mm)" });
-    }
-
-    const start = new Date(`1970-01-01T${startTime}:00`);
-    const end = new Date(`1970-01-01T${endTime}:00`);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({ message: "Invalid time format" });
-    }
-    if (start >= end) {
-      return res.status(400).json({ message: "Start time must be before end time" });
-    }
-
-    const updateData = { name };
-    if (specialization && specialization.trim().length > 0) {
-      updateData.specialization = specialization;
-    } else {
-      updateData.specialization = null;
-    }
-    updateData.twoFAEnabled = twoFAEnabled === "true";
-    updateData.availability = { startTime, endTime, days: parsedDays };
-    console.log("Updating availability:", updateData.availability);
+    const updateData = {
+      name: name.trim(),
+      specialization: specialization ? specialization.trim() : "",
+      twoFAEnabled: twoFAEnabled === "true" || twoFAEnabled === true,
+      availability: {
+        startTime: startTime || "",
+        endTime: endTime || "",
+        days: days ? JSON.parse(days) : [],
+      },
+    };
 
     if (req.file) {
-      const filePath = path.join(uploadDir, req.file.filename);
-      if (fs.existsSync(filePath)) {
-        updateData.profilePicture = `/Uploads/${req.file.filename}`;
-        console.log("Profile picture updated:", updateData.profilePicture);
-      } else {
-        console.error("File not found after upload:", filePath);
-        return res.status(500).json({ message: "Failed to save profile picture" });
+      updateData.profilePicture = `/Uploads/${req.file.filename}`;
+      console.log("[PUT /profile] Updated profilePicture:", updateData.profilePicture);
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      console.error("[PUT /profile] User not found:", req.user.id);
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // If a new profile picture is uploaded, delete the old one
+    if (req.file && user.profilePicture) {
+      const oldPicturePath = path.join(__dirname, "..", user.profilePicture);
+      try {
+        if (fs.existsSync(oldPicturePath)) {
+          fs.unlinkSync(oldPicturePath);
+          console.log("[PUT /profile] Deleted old profile picture:", oldPicturePath);
+        }
+      } catch (err) {
+        console.error("[PUT /profile] Error deleting old picture:", err);
       }
     }
 
-    console.log("Before update - User:", await User.findById(req.user.id).select("twoFAEnabled availability"));
-    const user = await User.findByIdAndUpdate(
+    const updatedUser = await User.findByIdAndUpdate(
       req.user.id,
       { $set: updateData },
       { new: true, runValidators: true }
     ).select("-password -otp -otpExpires");
-    console.log("After update - User:", await User.findById(req.user.id).select("twoFAEnabled availability"));
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    if (user.role !== "doctor") {
-      return res.status(403).json({ message: "Access denied: Not a doctor" });
+    if (!updatedUser) {
+      console.error("[PUT /profile] Failed to update user:", req.user.id);
+      return res.status(500).json({ message: "Failed to update profile" });
     }
 
-    console.log("Profile update successful:", {
-      userId: user._id,
-      name: user.name,
-      specialization: user.specialization,
-      twoFAEnabled: user.twoFAEnabled,
-      profilePicture: user.profilePicture,
-      availability: user.availability,
+    console.log("[PUT /profile] Profile updated:", {
+      id: updatedUser._id,
+      name: updatedUser.name,
+      specialization: updatedUser.specialization,
+      profilePicture: updatedUser.profilePicture,
+      twoFAEnabled: updatedUser.twoFAEnabled,
+      availability: updatedUser.availability,
     });
-    res.json({ message: "Profile updated successfully", user });
+    res.json({ user: updatedUser });
   } catch (err) {
-    console.error("Error in PUT /profile:", {
+    console.error("[PUT /profile] Error:", {
       message: err.message,
       stack: err.stack,
-      body: req.body,
-      file: req.file,
-      user: req.user,
     });
-    res.status(500).json({ message: err.message || "Server error" });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get appointment requests
+router.get("/appointment/requests", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[GET /appointment/requests] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const requests = await AppointmentRequest.find({
+      doctor: req.user.id,
+      status: "pending",
+    })
+      .populate("patient", "name profilePicture") // Add profilePicture
+      .sort({ date: 1, time: 1 });
+    console.log("[GET /appointment/requests] Fetched:", requests.length);
+    res.json(requests);
+  } catch (err) {
+    console.error("[GET /appointment/requests] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+// Get upcoming appointments
+router.get("/appointments", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[GET /appointments] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const appointments = await Appointment.find({ doctor: req.user.id })
+      .populate("patient", "name phoneNumber email profilePicture")
+      .sort({ date: 1, time: 1 });
+
+    console.log("[GET /appointments] Populated patients:", appointments.map(appt => ({
+      patientId: appt.patient?._id,
+      name: appt.patient?.name,
+      email: appt.patient?.email,
+      phoneNumber: appt.patient?.phoneNumber,
+      profilePicture: appt.patient?.profilePicture || "null"
+    })));
+
+    router.get("/test-populate", async (req, res) => {
+  try {
+    const user = await User.findById("682444381e1310be35f82875").select("name phoneNumber email profilePicture");
+    console.log("[GET /test-populate] User:", {
+      id: user?._id,
+      name: user?.name,
+      email: user?.email,
+      phoneNumber: user?.phoneNumber,
+      profilePicture: user?.profilePicture || "null"
+    });
+    res.json(user);
+  } catch (err) {
+    console.error("[GET /test-populate] Error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+    res.json(appointments);
+  } catch (err) {
+    console.error("[GET /appointments] Error:", {
+      message: err.message,
+      stack: err.stack
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Accept appointment request
+router.post("/appointment/accept", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[POST /appointment/accept] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const { requestId } = req.body;
+    console.log("[POST /appointment/accept] Received:", { requestId });
+
+    if (!requestId) {
+      console.error("[POST /appointment/accept] Validation failed: Request ID required");
+      return res.status(400).json({ message: "Request ID is required" });
+    }
+
+    const request = await AppointmentRequest.findById(requestId);
+    if (!request) {
+      console.error("[POST /appointment/accept] Request not found:", requestId);
+      return res.status(404).json({ message: "Appointment request not found" });
+    }
+
+    if (request.doctor.toString() !== req.user.id) {
+      console.error("[POST /appointment/accept] Unauthorized: Not your request:", requestId);
+      return res.status(403).json({ message: "Unauthorized: Not your request" });
+    }
+
+    if (request.status !== "pending") {
+      console.error("[POST /appointment/accept] Invalid status:", request.status);
+      return res.status(400).json({ message: "Request is not pending" });
+    }
+
+    // Check for time slot conflicts
+    const existingAppointment = await Appointment.findOne({
+      doctor: req.user.id,
+      date: request.date,
+      time: request.time,
+    });
+    if (existingAppointment) {
+      console.error("[POST /appointment/accept] Time slot already booked:", {
+        date: request.date,
+        time: request.time,
+      });
+      return res.status(400).json({ message: "This time slot is already booked" });
+    }
+
+    const appointment = new Appointment({
+      patient: request.patient,
+      doctor: request.doctor,
+      date: request.date,
+      time: request.time,
+      reason: request.reason,
+    });
+
+    await appointment.save();
+    request.status = "accepted";
+    await request.save();
+
+    console.log("[POST /appointment/accept] Accepted:", {
+      appointmentId: appointment._id,
+      requestId,
+    });
+    res.json({ message: "Appointment request accepted successfully" });
+  } catch (err) {
+    console.error("[POST /appointment/accept] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Reject appointment request
+router.post("/appointment/reject", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[POST /appointment/reject] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const { requestId } = req.body;
+    console.log("[POST /appointment/reject] Received:", { requestId });
+
+    if (!requestId) {
+      console.error("[POST /appointment/reject] Validation failed: Request ID required");
+      return res.status(400).json({ message: "Request ID is required" });
+    }
+
+    const request = await AppointmentRequest.findById(requestId);
+    if (!request) {
+      console.error("[POST /appointment/reject] Request not found:", requestId);
+      return res.status(404).json({ message: "Appointment request not found" });
+    }
+
+    if (request.doctor.toString() !== req.user.id) {
+      console.error("[POST /appointment/reject] Unauthorized: Not your request:", requestId);
+      return res.status(403).json({ message: "Unauthorized: Not your request" });
+    }
+
+    if (request.status !== "pending") {
+      console.error("[POST /appointment/reject] Invalid status:", request.status);
+      return res.status(400).json({ message: "Request is not pending" });
+    }
+
+    request.status = "rejected";
+    await request.save();
+
+    console.log("[POST /appointment/reject] Rejected:", { requestId });
+    res.json({ message: "Appointment request rejected successfully" });
+  } catch (err) {
+    console.error("[POST /appointment/reject] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ message: "Server error" });
   }
 });
 

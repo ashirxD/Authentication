@@ -10,6 +10,7 @@ import {
   resendOtpStart,
   resendOtpSuccess,
   resendOtpFailure,
+  logout,
 } from '../redux/slices/authSlice';
 
 const Signup = () => {
@@ -25,7 +26,17 @@ const Signup = () => {
   const [timeLeft, setTimeLeft] = useState(600);
   const navigate = useNavigate();
   const dispatch = useDispatch();
-  const { showOtpInput, loading, error, signupSuccessMessage } = useSelector((state) => state.auth);
+  const { showOtpInput, loading, error, signupSuccessMessage, user } = useSelector((state) => state.auth);
+
+  // Check if user is already authenticated
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token && user) {
+      console.log('[Signup] User already authenticated:', { user });
+      const destination = user.role === 'doctor' ? '/doctor-dashboard' : '/patient-dashboard';
+      navigate(destination, { replace: true });
+    }
+  }, [navigate, user]);
 
   // Timer for OTP
   useEffect(() => {
@@ -87,11 +98,13 @@ const Signup = () => {
     const validationErrors = validate();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
+      console.log('[Signup] Validation errors:', validationErrors);
       return;
     }
 
     dispatch(signupStart());
     try {
+      console.log('[Signup] Sending:', formData);
       const response = await fetch('http://localhost:5000/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -99,6 +112,8 @@ const Signup = () => {
       });
 
       const data = await response.json();
+      console.log('[Signup] Response:', { status: response.status, data });
+
       if (response.ok) {
         dispatch(signupSuccess());
         setTimeLeft(600);
@@ -106,7 +121,8 @@ const Signup = () => {
         dispatch(signupFailure(data.message || 'Signup failed'));
       }
     } catch (error) {
-      dispatch(signupFailure('Failed to connect to the server.'));
+      console.error('[Signup] Error:', error);
+      dispatch(signupFailure('Failed to connect to the server. Please check your network or try again later.'));
     }
   };
 
@@ -115,11 +131,13 @@ const Signup = () => {
     const validationErrors = validateOtp();
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
+      console.log('[Signup] OTP validation errors:', validationErrors);
       return;
     }
 
     dispatch(signupStart());
     try {
+      console.log('[Signup] Sending OTP verification:', { email: formData.email, otp });
       const response = await fetch('http://localhost:5000/api/email/verify-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,22 +145,26 @@ const Signup = () => {
       });
 
       const data = await response.json();
+      console.log('[Signup] OTP verification response:', { status: response.status, data });
+
       if (response.ok) {
         dispatch(verifyEmailSuccess());
         setTimeout(() => {
-          navigate('/signin');
+          navigate('/auth/signin', { replace: true });
         }, 2000);
       } else {
         dispatch(verifyEmailFailure(data.message || 'Verification failed'));
       }
     } catch (error) {
-      dispatch(verifyEmailFailure('Failed to connect to the server.'));
+      console.error('[Signup] OTP verification error:', error);
+      dispatch(verifyEmailFailure('Failed to connect to the server. Please check your network or try again later.'));
     }
   };
 
   const handleResendOtp = async () => {
     dispatch(resendOtpStart());
     try {
+      console.log('[Signup] Resending OTP for:', formData.email);
       const response = await fetch('http://localhost:5000/api/email/resend-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -150,6 +172,8 @@ const Signup = () => {
       });
 
       const data = await response.json();
+      console.log('[Signup] Resend OTP response:', { status: response.status, data });
+
       if (response.ok) {
         dispatch(resendOtpSuccess());
         setTimeLeft(600);
@@ -158,7 +182,8 @@ const Signup = () => {
         dispatch(resendOtpFailure(data.message || 'Failed to resend OTP'));
       }
     } catch (error) {
-      dispatch(resendOtpFailure('Failed to connect to the server.'));
+      console.error('[Signup] Resend OTP error:', error);
+      dispatch(resendOtpFailure('Failed to connect to the server. Please check your network or try again later.'));
     }
   };
 
@@ -214,10 +239,10 @@ const Signup = () => {
                 onChange={handleChange}
                 className={`w-full p-3 border ${
                   errors.name ? 'border-red-500' : 'border-gray-300'
-                } rounded-lg`}
+                } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="Full Name"
               />
-              {errors.name && <p className="text-red-500 text-xs">{errors.name}</p>}
+              {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
             </div>
 
             <div>
@@ -228,10 +253,10 @@ const Signup = () => {
                 onChange={handleChange}
                 className={`w-full p-3 border ${
                   errors.email ? 'border-red-500' : 'border-gray-300'
-                } rounded-lg`}
+                } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="Email Address"
               />
-              {errors.email && <p className="text-red-500 text-xs">{errors.email}</p>}
+              {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
             </div>
 
             <div>
@@ -242,10 +267,10 @@ const Signup = () => {
                 onChange={handleChange}
                 className={`w-full p-3 border ${
                   errors.password ? 'border-red-500' : 'border-gray-300'
-                } rounded-lg`}
+                } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="Password"
               />
-              {errors.password && <p className="text-red-500 text-xs">{errors.password}</p>}
+              {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
             </div>
 
             {formData.role === 'doctor' && (
@@ -257,11 +282,11 @@ const Signup = () => {
                   onChange={handleChange}
                   className={`w-full p-3 border ${
                     errors.specialization ? 'border-red-500' : 'border-gray-300'
-                  } rounded-lg`}
+                  } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`}
                   placeholder="Specialization (e.g., Cardiologist)"
                 />
                 {errors.specialization && (
-                  <p className="text-red-500 text-xs">{errors.specialization}</p>
+                  <p className="text-red-500 text-xs mt-1">{errors.specialization}</p>
                 )}
               </div>
             )}
@@ -269,10 +294,10 @@ const Signup = () => {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3 rounded-lg font-semibold ${
+              className={`w-full py-3 rounded-lg font-semibold transition-all ${
                 loading
                   ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:opacity-90'
+                  : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:opacity-90 hover:shadow-lg'
               }`}
             >
               {loading ? 'Signing Up...' : 'Sign Up'}
@@ -289,10 +314,10 @@ const Signup = () => {
                 disabled={timeLeft <= 0}
                 className={`w-full p-3 border ${
                   errors.otp || timeLeft <= 0 ? 'border-red-500' : 'border-gray-300'
-                } rounded-lg`}
+                } rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="Enter 6-digit OTP"
               />
-              {errors.otp && <p className="text-red-500 text-xs">{errors.otp}</p>}
+              {errors.otp && <p className="text-red-500 text-xs mt-1">{errors.otp}</p>}
               <p className="text-gray-600 text-sm mt-2">Time remaining: {formatTime(timeLeft)}</p>
             </div>
 
@@ -301,7 +326,9 @@ const Signup = () => {
                 type="button"
                 onClick={handleResendOtp}
                 disabled={loading}
-                className="w-full p-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50"
+                className={`w-full p-2 border border-blue-600 text-blue-600 rounded-lg transition-all ${
+                  loading ? 'cursor-not-allowed opacity-50' : 'hover:bg-blue-50'
+                }`}
               >
                 {loading ? 'Resending...' : 'Resend OTP'}
               </button>
@@ -310,10 +337,10 @@ const Signup = () => {
             <button
               type="submit"
               disabled={loading || timeLeft <= 0}
-              className={`w-full py-3 rounded-lg font-semibold ${
+              className={`w-full py-3 rounded-lg font-semibold transition-all ${
                 loading || timeLeft <= 0
                   ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:opacity-90'
+                  : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:opacity-90 hover:shadow-lg'
               }`}
             >
               {loading ? 'Verifying...' : 'Verify Email'}
@@ -323,7 +350,7 @@ const Signup = () => {
 
         <p className="text-center mt-4 text-sm text-gray-600">
           Already have an account?{' '}
-          <Link to="/signin" className="text-blue-600 font-medium hover:underline">
+          <Link to="/auth/signin" className="text-blue-600 font-medium hover:underline">
             Sign In
           </Link>
         </p>

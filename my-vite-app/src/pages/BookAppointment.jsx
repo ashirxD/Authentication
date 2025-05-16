@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
+import './BookAppointment.css';
 
 export default function BookAppointment() {
-  const [doctors, setDoctors] = useState([]);
-  const [formData, setFormData] = useState({
-    doctorId: "",
+  const { doctorId } = useParams();
+  const navigate = useNavigate();
+  const [doctor, setDoctor] = useState(null);
+  const [appointmentData, setAppointmentData] = useState({
+    doctorId: doctorId || "",
     date: "",
     time: "",
     reason: "",
@@ -12,19 +15,39 @@ export default function BookAppointment() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
+  const [requestStatus, setRequestStatus] = useState(null);
+  const [requestId, setRequestId] = useState(null);
 
-  // Fetch all doctors
-  const fetchDoctors = async () => {
+  // Log doctorId and URL for debugging
+  console.log("[BookAppointment] doctorId from useParams:", doctorId);
+  console.log("[BookAppointment] Current URL:", window.location.pathname);
+
+  // Validate doctorId format
+  const isValidDoctorId = (id) => {
+    return id && typeof id === "string" && id.trim() !== "" && /^[0-9a-fA-F]{24}$/.test(id);
+  };
+
+  // Fetch doctor details
+  const fetchDoctor = async () => {
+    setError("");
     try {
       const token = localStorage.getItem("token");
       if (!token) {
-        console.log("No token found, redirecting to signin");
-        navigate("/auth/signin");
+        console.log("[fetchDoctor] No token found, redirecting to signin");
+        setError("Please sign in to book an appointment.");
+        setTimeout(() => navigate("/auth/signin"), 2000);
         return;
       }
 
-      const response = await fetch("http://localhost:5000/api/patient/doctors", {
+      if (!isValidDoctorId(doctorId)) {
+        console.error("[fetchDoctor] Invalid doctorId format:", doctorId);
+        setError("Invalid doctor ID. Please select a valid doctor.");
+        setTimeout(() => navigate("/patient-dashboard"), 2000);
+        return;
+      }
+
+      console.log("[fetchDoctor] Fetching doctor with ID:", doctorId);
+      const response = await fetch(`http://localhost:5000/api/patient/doctors/${doctorId}`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -32,224 +55,315 @@ export default function BookAppointment() {
       });
 
       const data = await response.json();
-      console.log("Fetched doctors:", data);
+      console.log("[fetchDoctor] Response:", JSON.stringify(data, null, 2));
 
       if (!response.ok) {
-        console.error("Fetch doctors failed:", data.message);
-        setError(data.message || "Failed to fetch doctors");
+        console.error("[fetchDoctor] Failed:", { status: response.status, message: data.message });
+        if (response.status === 404) {
+          setError("Invalid doctor ID. Doctor not found.");
+        } else if (response.status === 401) {
+          console.log("[fetchDoctor] Unauthorized, clearing token");
+          localStorage.removeItem("token");
+          setError("Session expired. Please sign in again.");
+          setTimeout(() => navigate("/auth/signin"), 2000);
+        } else {
+          setError(data.message || "Failed to fetch doctor details");
+        }
+        setTimeout(() => navigate("/patient-dashboard"), 2000);
         return;
       }
 
-      setDoctors(data);
-      if (data.length > 0) {
-        setFormData((prev) => ({ ...prev, doctorId: data[0]._id }));
+      setDoctor(data);
+      setAppointmentData((prev) => ({ ...prev, doctorId: data._id }));
+    } catch (err) {
+      console.error("[fetchDoctor] Error:", err);
+      setError("Failed to connect to server. Please try again.");
+      setTimeout(() => navigate("/patient-dashboard"), 2000);
+    }
+  };
+
+  // Fetch appointment request status
+  const fetchRequestStatus = async (reqId) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("[fetchRequestStatus] No token found, redirecting to signin");
+        setError("Please sign in to view request status.");
+        setTimeout(() => navigate("/auth/signin"), 2000);
+        return;
+      }
+
+      console.log("[fetchRequestStatus] Fetching status for requestId:", reqId);
+      const response = await fetch("http://localhost:5000/api/patient/appointments", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+      console.log("[fetchRequestStatus] Response:", JSON.stringify(data, null, 2));
+
+      if (!response.ok) {
+        console.error("[fetchRequestStatus] Failed:", data.message);
+        setError(data.message || "Failed to fetch request status");
+        return;
+      }
+
+      const request = data.find((req) => req._id === reqId);
+      if (request) {
+        console.log("[fetchRequestStatus] Found request:", request);
+        setRequestStatus({
+          status: request.status,
+          date: request.date,
+          time: request.time,
+          doctorName: request.doctor?.name || "Unknown Doctor",
+        });
+      } else {
+        console.warn("[fetchRequestStatus] Request not found:", reqId);
+        setError("Appointment request not found.");
       }
     } catch (err) {
-      console.error("Error fetching doctors:", err);
-      setError("Something went wrong. Please try again.");
+      console.error("[fetchRequestStatus] Error:", err);
+      setError("Failed to connect to server. Please try again.");
     }
   };
 
   useEffect(() => {
-    fetchDoctors();
-  }, [navigate]);
+    if (doctorId) {
+      console.log("[useEffect] Processing doctorId:", doctorId);
+      fetchDoctor();
+    } else {
+      console.log("[useEffect] No doctorId, redirecting to patient-dashboard");
+      setError("No doctor selected. Please select a doctor.");
+      setTimeout(() => navigate("/patient-dashboard"), 2000);
+    }
+  }, [doctorId, navigate]);
 
   // Handle form input changes
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => {
-      const newData = { ...prev, [name]: value };
-      console.log("Updated formData:", newData);
-      return newData;
-    });
+    console.log("[handleInputChange] Input:", { name, value });
+    setAppointmentData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Handle form submission
-  const handleSubmit = async (e) => {
+  // Handle appointment request submission
+  const handleBookAppointment = async (e) => {
     e.preventDefault();
     setError("");
     setSuccess("");
     setIsLoading(true);
+    setRequestStatus(null);
 
     try {
       const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("[handleBookAppointment] No token found, redirecting to signin");
+        setError("Please sign in to book an appointment.");
+        setTimeout(() => navigate("/auth/signin"), 2000);
+        return;
+      }
+
+      const { doctorId, date, time, reason } = appointmentData;
+      console.log("[handleBookAppointment] Submitting:", { doctorId, date, time, reason });
+      if (!doctorId || !date || !time || !reason) {
+        console.error("[handleBookAppointment] Validation failed: All fields required");
+        setError("Please fill in all fields.");
+        setIsLoading(false);
+        return;
+      }
+
+      if (!isValidDoctorId(doctorId)) {
+        console.error("[handleBookAppointment] Invalid doctorId format:", doctorId);
+        setError("Invalid doctor ID. Please select a valid doctor.");
+        setIsLoading(false);
+        return;
+      }
+
       const response = await fetch("http://localhost:5000/api/patient/appointment/request", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ doctorId, date, time, reason }),
       });
 
       const data = await response.json();
-      console.log("Appointment request response:", data);
+      console.log("[handleBookAppointment] Response:", JSON.stringify(data, null, 2));
 
       if (!response.ok) {
-        console.error("Appointment request failed:", data.message);
+        console.error("[handleBookAppointment] Failed:", data.message);
         setError(data.message || "Failed to send appointment request");
         setIsLoading(false);
+        if (response.status === 401) {
+          console.log("[handleBookAppointment] Unauthorized, clearing token");
+          localStorage.removeItem("token");
+          setTimeout(() => navigate("/auth/signin"), 2000);
+        }
         return;
       }
 
       setSuccess("Appointment request sent successfully!");
-      setFormData({
-        doctorId: doctors.length > 0 ? doctors[0]._id : "",
-        date: "",
-        time: "",
-        reason: "",
-      });
+      setRequestId(data.requestId);
+      setAppointmentData({ doctorId: doctorId, date: "", time: "", reason: "" });
+      setIsLoading(false);
+      // Fetch status immediately after submission
+      if (data.requestId) {
+        fetchRequestStatus(data.requestId);
+      }
     } catch (err) {
-      console.error("Error sending appointment request:", err);
-      setError("Something went wrong. Please try again.");
-    } finally {
+      console.error("[handleBookAppointment] Error:", err);
+      setError("Failed to connect to server. Please try again.");
       setIsLoading(false);
     }
   };
 
-  // Get selected doctor's availability for time input constraints
-  const selectedDoctor = doctors.find((doc) => doc._id === formData.doctorId);
+  // Refresh status every 10 seconds if pending
+  useEffect(() => {
+    let interval;
+    if (requestId && requestStatus?.status === "pending") {
+      interval = setInterval(() => {
+        console.log("[useEffect] Polling status for requestId:", requestId);
+        fetchRequestStatus(requestId);
+      }, 10000);
+    }
+    return () => clearInterval(interval);
+  }, [requestId, requestStatus]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-pink-100 p-8">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">Book an Appointment</h1>
+    <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 p-8">
+      <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-6">
+        <h2 className="text-2xl font-bold text-gray-800 mb-6">Book Appointment</h2>
         {success && (
-          <p className="text-green-600 bg-green-100 border border-green-400 rounded p-3 mb-4">
+          <p className="text-green-600 bg-green-100 border border-green-400 rounded p-3 mb-4 animate-fade-in">
             {success}
           </p>
         )}
         {error && (
-          <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4">
+          <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4 animate-fade-in">
             {error}
           </p>
         )}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Available Doctors</h2>
-          {doctors.length === 0 ? (
-            <p className="text-gray-600">No doctors available.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {doctors.map((doctor) => (
-                <div
-                  key={doctor._id}
-                  className={`p-4 border rounded-lg flex items-center space-x-4 ${
-                    formData.doctorId === doctor._id ? "border-blue-500 bg-blue-50" : "border-gray-200"
-                  }`}
-                  onClick={() => setFormData((prev) => ({ ...prev, doctorId: doctor._id }))}
-                >
-                  {doctor.profilePicture && (
-                    <img
-                      src={`http://localhost:5000${doctor.profilePicture}?t=${Date.now()}`}
-                      alt={doctor.name}
-                      className="w-12 h-12 rounded-full object-cover"
-                      onError={(e) => console.error("Doctor image load error:", doctor.profilePicture, e)}
-                    />
-                  )}
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Dr. {doctor.name}</h3>
-                    {doctor.specialization && (
-                      <p className="text-gray-600">Specialization: {doctor.specialization}</p>
-                    )}
-                    {doctor.availability?.startTime && doctor.availability?.endTime ? (
-                      <p className="text-gray-600">
-                        Available: {doctor.availability.startTime} - {doctor.availability.endTime}
-                      </p>
-                    ) : (
-                      <p className="text-gray-600">Availability not set</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Appointment Details</h2>
-          <form onSubmit={handleSubmit}>
-            <div className="mb-4">
-              <label htmlFor="doctorId" className="block text-gray-700 font-medium mb-2">
-                Select Doctor *
-              </label>
-              <select
-                id="doctorId"
-                name="doctorId"
-                value={formData.doctorId}
-                onChange={handleInputChange}
-                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              >
-                {doctors.map((doctor) => (
-                  <option key={doctor._id} value={doctor._id}>
-                    Dr. {doctor.name} {doctor.specialization ? `(${doctor.specialization})` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="mb-4">
-              <label htmlFor="date" className="block text-gray-700 font-medium mb-2">
-                Date *
-              </label>
-              <input
-                type="date"
-                id="date"
-                name="date"
-                value={formData.date}
-                onChange={handleInputChange}
-                min={new Date().toISOString().split("T")[0]} // Restrict to future dates
-                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <label htmlFor="time" className="block text-gray-700 font-medium mb-2">
-                Time *
-              </label>
-              <input
-                type="time"
-                id="time"
-                name="time"
-                value={formData.time}
-                onChange={handleInputChange}
-                min={selectedDoctor?.availability?.startTime || ""}
-                max={selectedDoctor?.availability?.endTime || ""}
-                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-              />
-              {selectedDoctor?.availability?.startTime && selectedDoctor?.availability?.endTime && (
-                <p className="text-sm text-gray-500 mt-1">
-                  Doctor available from {selectedDoctor.availability.startTime} to{" "}
-                  {selectedDoctor.availability.endTime}
-                </p>
-              )}
-            </div>
-            <div className="mb-4">
-              <label htmlFor="reason" className="block text-gray-700 font-medium mb-2">
-                Reason for Appointment *
-              </label>
-              <textarea
-                id="reason"
-                name="reason"
-                value={formData.reason}
-                onChange={handleInputChange}
-                className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                rows="4"
-                required
-              />
-            </div>
+        {doctor && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold text-gray-800">{doctor.name}</h3>
+            <p className="text-gray-600">
+              Specialization: {doctor.specialization || "Not specified"}
+            </p>
+            {doctor.availability && doctor.availability.days?.length > 0 && (
+              <p className="text-gray-600">
+                Availability: {doctor.availability.days.join(", ")},{" "}
+                {doctor.availability.startTime} - {doctor.availability.endTime}
+              </p>
+            )}
+          </div>
+        )}
+        <form onSubmit={handleBookAppointment}>
+          <div className="mb-4">
+            <label
+              htmlFor="date"
+              className="block text-sm font-medium text-gray-700 mb-1"
+            >
+              Date *
+            </label>
+            <input
+              type="date"
+              id="date"
+              name="date"
+              value={appointmentData.date}
+              onChange={handleInputChange}
+              min={new Date().toISOString().split("T")[0]}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div className="mb-4">
+            <label
+              htmlFor="time"
+              className="block text-sm font-medium text-gray-700 mb-1"
+            >
+              Time *
+            </label>
+            <input
+              type="time"
+              id="time"
+              name="time"
+              value={appointmentData.time}
+              onChange={handleInputChange}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            />
+          </div>
+          <div className="mb-4">
+            <label
+              htmlFor="reason"
+              className="block text-sm font-medium text-gray-700 mb-1"
+            >
+              Reason for Appointment *
+            </label>
+            <textarea
+              id="reason"
+              name="reason"
+              value={appointmentData.reason}
+              onChange={handleInputChange}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows="4"
+              required
+            />
+          </div>
+          <div className="flex space-x-4">
             <button
               type="submit"
-              disabled={isLoading || doctors.length === 0}
-              className={`w-full p-2 rounded text-white transition ${
-                isLoading || doctors.length === 0
+              disabled={isLoading}
+              className={`flex-1 p-3 rounded-lg text-white font-semibold transition-all duration-200 ${
+                isLoading
                   ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-700"
+                  : "bg-blue-600 hover:bg-blue-700 hover:shadow-lg"
               }`}
             >
-              {isLoading ? "Sending Request..." : "Send Appointment Request"}
+              {isLoading ? "Sending..." : "Send Appointment Request"}
             </button>
-          </form>
-        </div>
+            <button
+              type="button"
+              onClick={() => navigate("/patient-dashboard")}
+              className="flex-1 p-3 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+        {requestStatus && (
+          <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">
+              Appointment Request Status
+            </h3>
+            <p className="text-gray-600">
+              <span className="font-medium">Status:</span>{" "}
+              <span
+                className={`capitalize ${
+                  requestStatus.status === "accepted"
+                    ? "text-green-600"
+                    : requestStatus.status === "rejected"
+                    ? "text-red-600"
+                    : "text-yellow-600"
+                }`}
+              >
+                {requestStatus.status}
+              </span>
+            </p>
+            <p className="text-gray-600">
+              <span className="font-medium">Doctor:</span> {requestStatus.doctorName}
+            </p>
+            <p className="text-gray-600">
+              <span className="font-medium">Date:</span>{" "}
+              {new Date(requestStatus.date).toISOString().split("T")[0]}
+            </p>
+            <p className="text-gray-600">
+              <span className="font-medium">Time:</span> {requestStatus.time}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
