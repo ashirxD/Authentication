@@ -4,9 +4,21 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const http = require("http");
+const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken"); // Add jsonwebtoken
+
 console.log("Starting server...");
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  },
+});
 
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, "Uploads");
@@ -31,11 +43,16 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:5173",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
 }));
 app.use("/uploads", (req, res, next) => {
-  console.log("Accessing uploads:", req.originalUrl);
+  console.log("[Static] Accessing uploads:", req.originalUrl);
   next();
 }, express.static(uploadDir));
+app.use((req, res, next) => {
+  console.log(`[Request] ${req.method} ${req.url}`);
+  next();
+});
 console.log("Serving static files from:", uploadDir);
 console.log("Middleware configured");
 
@@ -57,7 +74,7 @@ if (!process.env.EMAIL_PASS) {
   process.exit(1);
 }
 console.log("Environment variables loaded:");
-console.log("MONGODB_URI:", process.env.MONGODB_URI);
+console.log("MONGODB_URI:", process.env.MONGODB_URI.replace(/:.*@/, ":****@"));
 console.log("PORT:", process.env.PORT || 5000);
 console.log("EMAIL_USER:", process.env.EMAIL_USER);
 console.log("EMAIL_PASS:", process.env.EMAIL_PASS ? "**** (hidden)" : "undefined");
@@ -68,8 +85,6 @@ console.log("Connecting to MongoDB...");
 mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   family: 4,
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
 }).then(() => {
   console.log("MongoDB connected successfully");
 }).catch(err => {
@@ -81,19 +96,103 @@ mongoose.connect(process.env.MONGODB_URI, {
   process.exit(1);
 });
 
+// Notification Schema
+const notificationSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  message: { type: String, required: true },
+  type: { type: String, enum: ["appointment_request", "appointment_accepted", "appointment_rejected"], required: true },
+  appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: "AppointmentRequest" },
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+});
+const Notification = mongoose.model("Notification", notificationSchema);
+
+// Socket.IO Logic
+const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (err) {
+    console.error("[verifyToken] Error:", err.message);
+    return null;
+  }
+};
+
+io.on("connection", (socket) => {
+  console.log("[Socket.IO] User connected:", socket.id);
+
+  socket.on("authenticate", (token) => {
+    console.log("[Socket.IO] Authenticating token:", token.slice(0, 20) + "...");
+    const user = verifyToken(token);
+    if (!user) {
+      console.error("[Socket.IO] Authentication failed for socket:", socket.id);
+      socket.emit("error", "Authentication failed");
+      socket.disconnect();
+      return;
+    }
+    socket.userId = user.id;
+    socket.join(user.id);
+    console.log(`[Socket.IO] User ${user.id} authenticated and joined room`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("[Socket.IO] User disconnected:", socket.id);
+  });
+});
+
 // Routes
 try {
   const routes = require("./routes/index");
   app.use("/api", routes);
+
+  // Notification routes
+  const { authenticateToken } = require("./middleware/auth");
+  app.get("/api/notifications", authenticateToken, async (req, res) => {
+    try {
+      const notifications = await Notification.find({ userId: req.user.id })
+        .populate("appointmentId", "patient date time reason")
+        .sort({ createdAt: -1 });
+      res.json(notifications);
+    } catch (err) {
+      console.error("[GET /api/notifications] Error:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.put("/api/notifications/:id/read", authenticateToken, async (req, res) => {
+    try {
+      const notification = await Notification.findById(req.params.id);
+      if (!notification) return res.status(404).json({ message: "Notification not found" });
+      if (notification.userId.toString() !== req.user.id) {
+        return res.status(403).json({ message: "Unauthorized" });
+      }
+      notification.read = true;
+      await notification.save();
+      res.json(notification);
+    } catch (err) {
+      console.error("[PUT /api/notifications/:id/read] Error:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
   console.log("Routes loaded successfully");
 } catch (err) {
   console.error("Error loading routes:", err);
   process.exit(1);
-};
+}
+
+// Catch-all for 404s
+app.use((req, res) => {
+  console.log(`[404] ${req.method} ${req.url}`);
+  res.status(404).json({ message: "Route not found" });
+});
+
+// Make io and Notification model available to routes
+app.set("io", io);
+app.set("Notification", Notification);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error("Server error:", {
+  console.error("[Server error]:", {
     message: err.message,
     stack: err.stack,
     path: req.path,
@@ -104,7 +203,7 @@ app.use((err, req, res, next) => {
 
 // Start Server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`API available at http://localhost:${PORT}/api`);
 });

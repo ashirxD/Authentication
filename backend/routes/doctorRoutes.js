@@ -201,7 +201,7 @@ router.get("/appointment/requests", async (req, res) => {
       doctor: req.user.id,
       status: "pending",
     })
-      .populate("patient", "name profilePicture") // Add profilePicture
+      .populate("patient", "name profilePicture")
       .sort({ date: 1, time: 1 });
     console.log("[GET /appointment/requests] Fetched:", requests.length);
     res.json(requests);
@@ -213,6 +213,7 @@ router.get("/appointment/requests", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
 // Get upcoming appointments
 router.get("/appointments", async (req, res) => {
   try {
@@ -222,10 +223,17 @@ router.get("/appointments", async (req, res) => {
     }
 
     const appointments = await Appointment.find({ doctor: req.user.id })
-      .populate("patient", "name phoneNumber email profilePicture")
+      .populate({
+        path: "patient",
+        select: "name phoneNumber email profilePicture",
+        match: { _id: { $exists: true } }, // Ensure patient exists
+      })
       .sort({ date: 1, time: 1 });
 
-    console.log("[GET /appointments] Populated patients:", appointments.map(appt => ({
+    // Filter out appointments with null patient (in case populate fails)
+    const validAppointments = appointments.filter((appt) => appt.patient !== null);
+
+    console.log("[GET /appointments] Populated patients:", validAppointments.map(appt => ({
       patientId: appt.patient?._id,
       name: appt.patient?.name,
       email: appt.patient?.email,
@@ -233,28 +241,11 @@ router.get("/appointments", async (req, res) => {
       profilePicture: appt.patient?.profilePicture || "null"
     })));
 
-    router.get("/test-populate", async (req, res) => {
-  try {
-    const user = await User.findById("682444381e1310be35f82875").select("name phoneNumber email profilePicture");
-    console.log("[GET /test-populate] User:", {
-      id: user?._id,
-      name: user?.name,
-      email: user?.email,
-      phoneNumber: user?.phoneNumber,
-      profilePicture: user?.profilePicture || "null"
-    });
-    res.json(user);
-  } catch (err) {
-    console.error("[GET /test-populate] Error:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-    res.json(appointments);
+    res.json(validAppointments);
   } catch (err) {
     console.error("[GET /appointments] Error:", {
       message: err.message,
-      stack: err.stack
+      stack: err.stack,
     });
     res.status(500).json({ message: "Server error" });
   }
@@ -276,19 +267,37 @@ router.post("/appointment/accept", async (req, res) => {
       return res.status(400).json({ message: "Request ID is required" });
     }
 
-    const request = await AppointmentRequest.findById(requestId);
+    // Validate ObjectId format
+    if (!requestId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error("[POST /appointment/accept] Invalid request ID format:", requestId);
+      return res.status(400).json({ message: "Invalid request ID format" });
+    }
+
+    // Fetch doctor details to get the name
+    const doctor = await User.findById(req.user.id).select("name");
+    if (!doctor) {
+      console.error("[POST /appointment/accept] Doctor not found:", req.user.id);
+      return res.status(404).json({ message: "Doctor not found" });
+    }
+
+    // Atomically find and update the request to prevent race conditions
+    const request = await AppointmentRequest.findOneAndUpdate(
+      { _id: requestId, doctor: req.user.id, status: "pending" },
+      { status: "accepted" },
+      { new: true }
+    ).populate("patient", "name");
+
     if (!request) {
-      console.error("[POST /appointment/accept] Request not found:", requestId);
-      return res.status(404).json({ message: "Appointment request not found" });
-    }
-
-    if (request.doctor.toString() !== req.user.id) {
-      console.error("[POST /appointment/accept] Unauthorized: Not your request:", requestId);
-      return res.status(403).json({ message: "Unauthorized: Not your request" });
-    }
-
-    if (request.status !== "pending") {
-      console.error("[POST /appointment/accept] Invalid status:", request.status);
+      const existingRequest = await AppointmentRequest.findById(requestId);
+      if (!existingRequest) {
+        console.error("[POST /appointment/accept] Request not found:", requestId);
+        return res.status(404).json({ message: "Appointment request not found" });
+      }
+      if (existingRequest.doctor.toString() !== req.user.id) {
+        console.error("[POST /appointment/accept] Unauthorized: Not your request:", requestId);
+        return res.status(403).json({ message: "Unauthorized: Not your request" });
+      }
+      console.error("[POST /appointment/accept] Invalid status:", existingRequest.status);
       return res.status(400).json({ message: "Request is not pending" });
     }
 
@@ -299,6 +308,9 @@ router.post("/appointment/accept", async (req, res) => {
       time: request.time,
     });
     if (existingAppointment) {
+      // Revert the status change if there's a conflict
+      request.status = "pending";
+      await request.save();
       console.error("[POST /appointment/accept] Time slot already booked:", {
         date: request.date,
         time: request.time,
@@ -306,6 +318,7 @@ router.post("/appointment/accept", async (req, res) => {
       return res.status(400).json({ message: "This time slot is already booked" });
     }
 
+    // Create the appointment
     const appointment = new Appointment({
       patient: request.patient,
       doctor: request.doctor,
@@ -313,14 +326,49 @@ router.post("/appointment/accept", async (req, res) => {
       time: request.time,
       reason: request.reason,
     });
-
     await appointment.save();
-    request.status = "accepted";
-    await request.save();
+
+    // Create notifications
+    const Notification = req.app.get("Notification");
+    const io = req.app.get("io");
+
+    // Notify patient
+    const patientNotification = new Notification({
+      userId: request.patient,
+      message: `Dr. ${doctor.name} accepted your appointment request`,
+      type: "appointment_accepted",
+      appointmentId: request._id,
+    });
+    await patientNotification.save();
+
+    io.to(request.patient.toString()).emit("appointmentUpdate", {
+      requestId,
+      status: "accepted",
+      message: patientNotification.message,
+      notificationId: patientNotification._id,
+    });
+
+    // Notify doctor
+    const doctorNotification = new Notification({
+      userId: req.user.id,
+      message: `You accepted an appointment with ${request.patient.name}`,
+      type: "appointment_accepted",
+      appointmentId: request._id,
+    });
+    await doctorNotification.save();
+
+    io.to(req.user.id.toString()).emit("appointmentUpdate", {
+      requestId,
+      status: "accepted",
+      message: doctorNotification.message,
+      notificationId: doctorNotification._id,
+    });
 
     console.log("[POST /appointment/accept] Accepted:", {
       appointmentId: appointment._id,
       requestId,
+      doctorName: doctor.name,
+      patientName: request.patient.name,
     });
     res.json({ message: "Appointment request accepted successfully" });
   } catch (err) {
@@ -328,6 +376,9 @@ router.post("/appointment/accept", async (req, res) => {
       message: err.message,
       stack: err.stack,
     });
+    if (err.kind === "ObjectId") {
+      return res.status(400).json({ message: "Invalid request ID format" });
+    }
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -348,32 +399,91 @@ router.post("/appointment/reject", async (req, res) => {
       return res.status(400).json({ message: "Request ID is required" });
     }
 
-    const request = await AppointmentRequest.findById(requestId);
+    // Validate ObjectId format
+    if (!requestId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error("[POST /appointment/reject] Invalid request ID format:", requestId);
+      return res.status(400).json({ message: "Invalid request ID format" });
+    }
+
+    // Fetch doctor details to ensure consistency (name may be used in future enhancements)
+    const doctor = await User.findById(req.user.id).select("name");
+    if (!doctor) {
+      console.error("[POST /appointment/reject] Doctor not found:", req.user.id);
+      return res.status(404).json({ message: "Doctor not found" });
+    }
+
+    // Atomically find and update the request to prevent race conditions
+    const request = await AppointmentRequest.findOneAndUpdate(
+      { _id: requestId, doctor: req.user.id, status: "pending" },
+      { status: "rejected" },
+      { new: true }
+    ).populate("patient", "name");
+
     if (!request) {
-      console.error("[POST /appointment/reject] Request not found:", requestId);
-      return res.status(404).json({ message: "Appointment request not found" });
-    }
-
-    if (request.doctor.toString() !== req.user.id) {
-      console.error("[POST /appointment/reject] Unauthorized: Not your request:", requestId);
-      return res.status(403).json({ message: "Unauthorized: Not your request" });
-    }
-
-    if (request.status !== "pending") {
-      console.error("[POST /appointment/reject] Invalid status:", request.status);
+      const existingRequest = await AppointmentRequest.findById(requestId);
+      if (!existingRequest) {
+        console.error("[POST /appointment/reject] Request not found:", requestId);
+        return res.status(404).json({ message: "Appointment request not found" });
+      }
+      if (existingRequest.doctor.toString() !== req.user.id) {
+        console.error("[POST /appointment/reject] Unauthorized: Not your request:", requestId);
+        return res.status(403).json({ message: "Unauthorized: Not your request" });
+      }
+      console.error("[POST /appointment/reject] Invalid status:", existingRequest.status);
       return res.status(400).json({ message: "Request is not pending" });
     }
 
-    request.status = "rejected";
-    await request.save();
+    // Create notifications
+    const Notification = req.app.get("Notification");
+    const io = req.app.get("io");
 
-    console.log("[POST /appointment/reject] Rejected:", { requestId });
+    // Notify patient
+    const patientNotification = new Notification({
+      userId: request.patient,
+      message: `Dr. ${doctor.name} rejected your appointment request`,
+      type: "appointment_rejected",
+      appointmentId: request._id,
+    });
+    await patientNotification.save();
+
+    io.to(request.patient.toString()).emit("appointmentUpdate", {
+      requestId,
+      status: "rejected",
+      message: patientNotification.message,
+      notificationId: patientNotification._id,
+    });
+
+    // Notify doctor
+    const doctorNotification = new Notification({
+      userId: req.user.id,
+      message: `You rejected an appointment request from ${request.patient.name}`,
+      type: "appointment_rejected",
+      appointmentId: request._id,
+      createdAt: new Date(),
+    });
+    await doctorNotification.save();
+
+    io.to(req.user.id.toString()).emit("appointmentUpdate", {
+      requestId,
+      status: "rejected",
+      message: doctorNotification.message,
+      notificationId: doctorNotification._id,
+    });
+
+    console.log("[POST /appointment/reject] Rejected:", {
+      requestId,
+      doctorName: doctor.name,
+      patientName: request.patient.name,
+    });
     res.json({ message: "Appointment request rejected successfully" });
   } catch (err) {
     console.error("[POST /appointment/reject] Error:", {
       message: err.message,
       stack: err.stack,
     });
+    if (err.kind === "ObjectId") {
+      return res.status(400).json({ message: "Invalid request ID format" });
+    }
     res.status(500).json({ message: "Server error" });
   }
 });

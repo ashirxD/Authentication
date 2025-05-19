@@ -5,6 +5,7 @@ const initialState = {
   isAuthenticated: false, // Indicates if user is logged in
   role: null, // User role ('doctor' or 'patient')
   isEmailVerified: false, // Tracks email verification status
+  token: '', // Stores JWT token
   loading: false, // Manages loading state for async actions
   error: null, // Stores error messages
   showOtpInput: false, // Controls OTP input visibility in Signup/Signin
@@ -31,6 +32,7 @@ const authSlice = createSlice({
       };
       state.role = action.payload.role;
       state.isEmailVerified = action.payload.isEmailVerified;
+      state.token = action.payload.token || state.token; // Store token
     },
     verifyTokenFailure(state, action) {
       state.loading = false;
@@ -38,6 +40,7 @@ const authSlice = createSlice({
       state.isAuthenticated = false;
       state.user = null;
       state.role = null;
+      state.token = '';
       state.showOtpInput = false;
       state.pendingToken = '';
     },
@@ -50,12 +53,14 @@ const authSlice = createSlice({
       state.loading = false;
       state.showOtpInput = !!action.payload.pendingToken;
       state.pendingToken = action.payload.pendingToken || '';
+      state.token = action.payload.token || state.token; // Store token if provided
     },
     loginFailure(state, action) {
       state.loading = false;
       state.error = action.payload;
       state.showOtpInput = false;
       state.pendingToken = '';
+      state.token = '';
     },
     // OTP verification actions
     verifyOtpSuccess(state, action) {
@@ -70,10 +75,12 @@ const authSlice = createSlice({
       state.isEmailVerified = action.payload.isEmailVerified;
       state.showOtpInput = false;
       state.pendingToken = '';
+      state.token = action.payload.token || state.token; // Store token
     },
     verifyOtpFailure(state, action) {
       state.loading = false;
       state.error = action.payload;
+      state.token = '';
     },
     // OTP resend actions
     resendOtpStart(state) {
@@ -141,6 +148,7 @@ const authSlice = createSlice({
       state.isAuthenticated = false;
       state.role = null;
       state.isEmailVerified = false;
+      state.token = '';
       state.error = null;
       state.showOtpInput = false;
       state.pendingToken = '';

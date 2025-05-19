@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const moment = require("moment");
 const User = require("../models/User");
 const AppointmentRequest = require("../models/AppointmentRequest");
 
@@ -272,9 +273,6 @@ router.get("/doctors/:id", async (req, res) => {
 });
 
 // Send appointment request
-// patient.js
-// patient.js
-// patient.js
 router.post("/appointment/request", async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
@@ -311,7 +309,7 @@ router.post("/appointment/request", async (req, res) => {
       return res.status(400).json({ message: "Invalid time format. Use HH:mm" });
     }
 
-    const doctor = await User.findById(doctorId).select("availability role");
+    const doctor = await User.findById(doctorId).select("availability role name");
     if (!doctor || doctor.role !== "doctor") {
       console.error("[POST /appointment/request] Doctor not found:", doctorId);
       return res.status(404).json({ message: "Doctor not found" });
@@ -357,6 +355,12 @@ router.post("/appointment/request", async (req, res) => {
       return res.status(400).json({ message: "This time slot is already booked" });
     }
 
+    const patient = await User.findById(req.user.id).select("name");
+    if (!patient) {
+      console.error("[POST /appointment/request] Patient not found:", req.user.id);
+      return res.status(404).json({ message: "Patient not found" });
+    }
+
     const appointmentRequest = new AppointmentRequest({
       patient: req.user.id,
       doctor: doctorId,
@@ -367,6 +371,45 @@ router.post("/appointment/request", async (req, res) => {
     });
 
     const savedRequest = await appointmentRequest.save();
+
+    // Create notification for doctor
+    const Notification = req.app.get("Notification");
+    const io = req.app.get("io");
+
+    const doctorNotification = new Notification({
+      userId: doctorId,
+      message: `New appointment request from ${patient.name}`,
+      type: "appointment_request",
+      appointmentId: savedRequest._id,
+    });
+    await doctorNotification.save();
+
+    // Emit to doctor
+    io.to(doctorId.toString()).emit("newAppointmentRequest", {
+      _id: savedRequest._id,
+      patient: { name: patient.name },
+      date: savedRequest.date,
+      time: savedRequest.time,
+      reason: savedRequest.reason,
+      notificationId: doctorNotification._id,
+    });
+
+    // Create notification for patient
+    const patientNotification = new Notification({
+      userId: req.user.id,
+      message: `Your appointment request to Dr. ${doctor.name} has been sent`,
+      type: "appointment_request",
+      appointmentId: savedRequest._id,
+    });
+    await patientNotification.save();
+
+    // Emit to patient
+    io.to(req.user.id.toString()).emit("appointmentRequestSent", {
+      requestId: savedRequest._id,
+      message: patientNotification.message,
+      notificationId: patientNotification._id,
+    });
+
     console.log("[POST /appointment/request] Saved:", {
       id: savedRequest._id,
       doctorId,
@@ -477,109 +520,6 @@ router.get("/appointments", async (req, res) => {
   }
 });
 
-router.post("test", (req, res) => {
-  console.log("[POST /test] Received:", req.body);
-  res.json({ message: "Test endpoint hit successfully" });
-}); 
-
-
-// patient.js
-// const moment = require("moment");
-
-// // Get available slots for a doctor on a specific date
-// router.get("/doctors/:id/slots", async (req, res) => {
-//   try {
-//     if (!req.user || !req.user.id) {
-//       console.error("[GET /doctors/:id/slots] Unauthorized: No user ID");
-//       return res.status(401).json({ message: "Unauthorized: Invalid user" });
-//     }
-
-//     const doctorId = req.params.id;
-//     const { date } = req.query; // Expect date in YYYY-MM-DD format
-//     console.log("[GET /doctors/:id/slots] Received:", { doctorId, date });
-
-//     if (!date || !moment(date, "YYYY-MM-DD", true).isValid()) {
-//       console.error("[GET /doctors/:id/slots] Invalid date format:", date);
-//       return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD" });
-//     }
-
-//     if (!doctorId.match(/^[0-9a-fA-F]{24}$/)) {
-//       console.error("[GET /doctors/:id/slots] Invalid doctorId format:", doctorId);
-//       return res.status(400).json({ message: "Invalid doctor ID format" });
-//     }
-
-//     const doctor = await User.findById(doctorId).select("availability role");
-//     if (!doctor || doctor.role !== "doctor") {
-//       console.error("[GET /doctors/:id/slots] Doctor not found:", doctorId);
-//       return res.status(404).json({ message: "Doctor not found" });
-//     }
-
-//     const selectedDate = moment(date);
-//     const dayOfWeek = selectedDate.format("dddd");
-//     if (!doctor.availability?.days?.includes(dayOfWeek)) {
-//       console.warn("[GET /doctors/:id/slots] Doctor not available on:", dayOfWeek);
-//       return res.status(400).json({ message: `Doctor not available on ${dayOfWeek}` });
-//     }
-
-//     // Parse start and end times
-//     const startTime = moment(`${date} ${doctor.availability.startTime}`, "YYYY-MM-DD HH:mm");
-//     const endTime = moment(`${date} ${doctor.availability.endTime}`, "YYYY-MM-DD HH:mm");
-
-//     if (!startTime.isValid() || !endTime.isValid()) {
-//       console.error("[GET /doctors/:id/slots] Invalid time format:", {
-//         startTime: doctor.availability.startTime,
-//         endTime: doctor.availability.endTime,
-//       });
-//       return res.status(400).json({ message: "Invalid time format in doctor availability" });
-//     }
-
-//     // Generate 30-minute slots
-//     const slots = [];
-//     let currentTime = startTime.clone();
-//     while (currentTime.isBefore(endTime) && currentTime.clone().add(30, "minutes").isSameOrBefore(endTime)) {
-//       slots.push({
-//         start: currentTime.format("HH:mm"),
-//         end: currentTime.clone().add(30, "minutes").format("HH:mm"),
-//       });
-//       currentTime.add(30, "minutes");
-//     }
-
-//     // Fetch booked slots for the doctor on the selected date
-//     const bookedAppointments = await AppointmentRequest.find({
-//       doctor: doctorId,
-//       date: selectedDate.format("YYYY-MM-DD"),
-//       status: "accepted",
-//     }).select("time");
-
-//     const bookedTimes = bookedAppointments.map((appt) => appt.time);
-
-//     // Filter out booked slots
-//     const availableSlots = slots.filter((slot) => !bookedTimes.includes(slot.start));
-
-//     console.log("[GET /doctors/:id/slots] Generated:", {
-//       doctorId,
-//       date,
-//       totalSlots: slots.length,
-//       availableSlots: availableSlots.length,
-//       bookedTimes,
-//     });
-
-//     res.json(availableSlots);
-//   } catch (err) {
-//     console.error("[GET /doctors/:id/slots] Error:", {
-//       message: err.message,
-//       stack: err.stack,
-//     });
-//     if (err.kind === "ObjectId") {
-//       return res.status(400).json({ message: "Invalid doctor ID format" });
-//     }
-//     res.status(500).json({ message: "Server error" });
-//   }
-// });
-
-// patient.js
-const moment = require("moment");
-
 // Get available slots for a doctor on a specific date
 router.get("/doctors/:id/slots", async (req, res) => {
   try {
@@ -666,6 +606,95 @@ router.get("/doctors/:id/slots", async (req, res) => {
     });
     if (err.kind === "ObjectId") {
       return res.status(400).json({ message: "Invalid doctor ID format" });
+    }
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get patient notifications
+router.get("/notifications", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[GET /notifications] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const Notification = req.app.get("Notification");
+    const notifications = await Notification.find({ userId: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(50); // Limit to recent 50 notifications
+
+    console.log("[GET /notifications] Fetched:", {
+      count: notifications.length,
+      patientId: req.user.id,
+    });
+
+    res.json(notifications);
+  } catch (err) {
+    console.error("[GET /notifications] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Mark a notification as read
+router.put("/notifications/:id/read", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[PUT /notifications/:id/read] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const notificationId = req.params.id;
+    console.log("[PUT /notifications/:id/read] Marking notification as read:", notificationId);
+
+    // Validate ObjectId format
+    if (!notificationId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error("[PUT /notifications/:id/read] Invalid notification ID format:", notificationId);
+      return res.status(400).json({ message: "Invalid notification ID format" });
+    }
+
+    const Notification = req.app.get("Notification");
+    const notification = await Notification.findById(notificationId);
+
+    if (!notification) {
+      console.error("[PUT /notifications/:id/read] Notification not found:", notificationId);
+      return res.status(404).json({ message: "Notification not found" });
+    }
+
+    // Ensure the notification belongs to the user
+    if (notification.userId.toString() !== req.user.id) {
+      console.error("[PUT /notifications/:id/read] Unauthorized: Notification does not belong to user:", {
+        notificationId,
+        userId: req.user.id,
+      });
+      return res.status(403).json({ message: "Unauthorized: You cannot mark this notification as read" });
+    }
+
+    // Check if already read to avoid unnecessary updates
+    if (notification.read) {
+      console.log("[PUT /notifications/:id/read] Notification already read:", notificationId);
+      return res.json(notification);
+    }
+
+    notification.read = true;
+    const updatedNotification = await notification.save();
+
+    console.log("[PUT /notifications/:id/read] Notification marked as read:", {
+      id: updatedNotification._id,
+      userId: req.user.id,
+    });
+
+    res.json(updatedNotification);
+  } catch (err) {
+    console.error("[PUT /notifications/:id/read] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    if (err.kind === "ObjectId") {
+      return res.status(400).json({ message: "Invalid notification ID format" });
     }
     res.status(500).json({ message: "Server error" });
   }

@@ -6,6 +6,7 @@ import {
   PencilIcon,
   XMarkIcon,
   UserGroupIcon,
+  BellIcon,
 } from "@heroicons/react/24/outline";
 
 // Sidebar Component
@@ -67,24 +68,60 @@ export function PatientSidebar({ activeSection, setActiveSection, handleLogout }
 }
 
 // Header Component
-export function PatientHeader({ userData }) {
+export function PatientHeader({
+  userData,
+  notifications = [],
+  toggleNotifications,
+  showNotifications,
+  markNotificationAsRead,
+  error,
+}) {
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
   return (
-    <div className="mb-8 flex items-center space-x-4">
-      {userData.profilePicture && userData.profilePicture !== "" && (
-        <img
-          src={`http://localhost:5000${userData.profilePicture}?t=${Date.now()}`}
-          alt="Profile"
-          className="w-12 h-12 rounded-full object-cover"
-          onError={(e) => console.error("[PatientHeader] Image load error:", userData.profilePicture, e)}
-        />
-      )}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-800">
-          Welcome, {userData.name || "Loading..."}!
-        </h1>
-        <p className="text-gray-600">
-          Manage your health and appointments from your dashboard.
-        </p>
+    <div className="mb-8 flex items-center justify-between">
+      <div className="flex items-center space-x-4">
+        {userData.profilePicture && userData.profilePicture !== "" && (
+          <img
+            src={`http://localhost:5000${userData.profilePicture}?t=${Date.now()}`}
+            alt="Profile"
+            className="w-12 h-12 rounded-full object-cover"
+            onError={(e) => console.error("[PatientHeader] Image load error:", userData.profilePicture, e)}
+          />
+        )}
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">
+            Welcome, {userData.name || "Loading..."}!
+          </h1>
+          <p className="text-gray-600">
+            Manage your health and appointments from your dashboard.
+          </p>
+        </div>
+      </div>
+      <div className="relative">
+        <button
+          onClick={toggleNotifications}
+          className="relative focus:outline-none p-2 rounded-full hover:bg-blue-100 transition"
+          aria-label="Notifications"
+        >
+          <BellIcon className="h-6 w-6 text-gray-700" />
+          {unreadCount > 0 && (
+            <span className="absolute right-0 top-0 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+        {showNotifications && (
+          <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto">
+            <div className="p-4">
+              <NotificationsList
+                notifications={notifications}
+                markNotificationAsRead={markNotificationAsRead}
+                error={error}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -451,6 +488,54 @@ export function DoctorsSection({ doctors, error, navigate }) {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Notifications List Component (Copied from Doctor's Dashboard for Consistency)
+export function NotificationsList({ notifications = [], markNotificationAsRead, error }) {
+  console.log("[NotificationsList] Rendering, notifications:", notifications);
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
+      {error && (
+        <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4 animate-fade-in">
+          {error}
+        </p>
+      )}
+      {notifications.length === 0 ? (
+        <p className="text-gray-600">No notifications.</p>
+      ) : (
+        <ul className="space-y-2">
+          {notifications.map((notification) => (
+            <li
+              key={notification?._id || `notif-${Date.now()}`}
+              className={`p-3 rounded-lg transition ${
+                notification.read ? "bg-gray-100" : "bg-blue-50"
+              } hover:bg-blue-100`}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
+                  <p className="text-xs text-gray-500">
+                    {notification?.createdAt
+                      ? new Date(notification.createdAt).toLocaleString()
+                      : "Unknown time"}
+                  </p>
+                </div>
+                {!notification.read && (
+                  <button
+                    onClick={() => markNotificationAsRead(notification._id)}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    Mark as read
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

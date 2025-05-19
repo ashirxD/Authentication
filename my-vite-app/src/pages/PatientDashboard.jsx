@@ -10,6 +10,7 @@ import {
   EditProfileSection,
   DoctorsSection,
 } from "./Components/PatientComponents";
+import io from "socket.io-client";
 import './PatientDashboard.css';
 
 // Debounce utility
@@ -45,11 +46,27 @@ export default function PatientDashboard() {
   const [activeSection, setActiveSection] = useState("appointments");
   const [doctors, setDoctors] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [timeFilter, setTimeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [doctorFilter, setDoctorFilter] = useState("");
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [socketStatus, setSocketStatus] = useState("disconnected"); // Track socket status
   const navigate = useNavigate();
   const dispatch = useDispatch();
+
+  // Initialize Socket.IO
+  const socket = useMemo(() => {
+    const token = localStorage.getItem("token") || "";
+    console.log("[Socket.IO] Initializing with token:", token.slice(0, 20) + "...");
+    return io(import.meta.env.VITE_API_URL || "http://localhost:5000", {
+      auth: { token },
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+  }, []);
 
   // Fetch user data
   const fetchUserData = async () => {
@@ -62,7 +79,7 @@ export default function PatientDashboard() {
         return;
       }
 
-      const response = await fetch("http://localhost:5000/api/patient/user", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/patient/user`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -127,7 +144,7 @@ export default function PatientDashboard() {
         return;
       }
 
-      const response = await fetch("http://localhost:5000/api/patient/doctors", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/patient/doctors`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -189,7 +206,7 @@ export default function PatientDashboard() {
       if (filters.statusFilter) queryParams.append("status", filters.statusFilter);
       if (filters.doctorFilter) queryParams.append("doctorId", filters.doctorFilter);
 
-      const url = `http://localhost:5000/api/patient/appointments?${queryParams.toString()}`;
+      const url = `${import.meta.env.VITE_API_URL}/api/patient/appointments?${queryParams.toString()}`;
       console.log("[fetchAppointments] Request URL:", url);
 
       const response = await fetch(url, {
@@ -245,6 +262,86 @@ export default function PatientDashboard() {
     }
   };
 
+  // Fetch notifications
+  const fetchNotifications = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("[fetchNotifications] No token found, redirecting to signin");
+        dispatch(logout());
+        navigate("/auth/signin", { replace: true });
+        return;
+      }
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/notifications`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+      console.log("[fetchNotifications] Response:", data);
+
+      if (!response.ok) {
+        console.error("[fetchNotifications] Failed:", data.message);
+        setError(data.message || "Failed to fetch notifications");
+        return;
+      }
+
+      if (!Array.isArray(data)) {
+        console.warn("[fetchNotifications] Response is not an array:", data);
+        setError("Invalid response format from server");
+        return;
+      }
+
+      setNotifications(data);
+    } catch (err) {
+      console.error("[fetchNotifications] Error:", err);
+      setError("Something went wrong while fetching notifications. Please try again.");
+    }
+  };
+
+  // Mark notification as read
+  const markNotificationAsRead = async (notificationId) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("[markNotificationAsRead] No token found, redirecting to signin");
+        dispatch(logout());
+        navigate("/auth/signin", { replace: true });
+        return;
+      }
+
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/notifications/${notificationId}/read`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+      console.log("[markNotificationAsRead] Response:", data);
+
+      if (!response.ok) {
+        console.error("[markNotificationAsRead] Failed:", data.message);
+        setError(data.message || "Failed to mark notification as read");
+        return;
+      }
+
+      setNotifications((prev) =>
+        prev.map((notification) =>
+          notification._id === notificationId
+            ? { ...notification, read: true }
+            : notification
+        )
+      );
+    } catch (err) {
+      console.error("[markNotificationAsRead] Error:", err);
+      setError("Something went wrong while marking notification as read.");
+    }
+  };
+
   // Debounced fetchAppointments
   const debouncedFetchAppointments = useMemo(
     () => debounce((filters) => fetchAppointments(filters), 300),
@@ -269,19 +366,108 @@ export default function PatientDashboard() {
     console.log("[clearFilters] All filters cleared");
   };
 
+  // Toggle notifications dropdown
+  const toggleNotifications = () => {
+    setShowNotifications((prev) => {
+      if (!prev) {
+        fetchNotifications();
+      }
+      return !prev;
+    });
+  };
+
+  // Handle Socket.IO events
+  useEffect(() => {
+    socket.on("connect", () => {
+      console.log("[Socket.IO] Connected to server");
+      setSocketStatus("connected");
+      const token = localStorage.getItem("token") || "";
+      const cleanToken = token.replace(/^Bearer\s+/i, "");
+      console.log("[Socket.IO] Emitting authenticate with token:", cleanToken.slice(0, 20) + "...");
+      socket.emit("authenticate", cleanToken);
+    });
+
+    socket.on("authenticated", () => {
+      console.log("[Socket.IO] Successfully authenticated");
+      setSocketStatus("authenticated");
+    });
+
+    socket.on("error", (error) => {
+      console.error("[Socket.IO] Server error:", error);
+      setError(`Socket error: ${error}`);
+      setSocketStatus("error");
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("[Socket.IO] Connection error:", err.message);
+      setError(`Socket connection failed: ${err.message}`);
+      setSocketStatus("error");
+    });
+
+    socket.on("appointmentUpdate", (data) => {
+      console.log("[Socket.IO] Received appointmentUpdate:", data);
+      setNotifications((prev) => {
+        const newNotification = {
+          _id: data.notificationId || `temp-${Date.now()}`,
+          message: data.message || `Appointment ${data.status}`,
+          type: data.status === "accepted" ? "appointment_accepted" : "appointment_rejected",
+          appointmentId: data.requestId,
+          createdAt: new Date(),
+          read: false,
+        };
+        console.log("[Socket.IO] Adding notification:", newNotification);
+        return [newNotification, ...prev];
+      });
+    });
+
+    socket.on("appointmentRequestSent", (data) => {
+      console.log("[Socket.IO] Received appointmentRequestSent:", data);
+      setNotifications((prev) => {
+        const newNotification = {
+          _id: data.notificationId || `temp-${Date.now()}`,
+          message: data.message || "Appointment request sent",
+          type: "appointment_request",
+          appointmentId: data.requestId,
+          createdAt: new Date(),
+          read: false,
+        };
+        console.log("[Socket.IO] Adding notification:", newNotification);
+        return [newNotification, ...prev];
+      });
+    });
+
+    socket.on("disconnect", () => {
+      console.log("[Socket.IO] Disconnected from server");
+      setSocketStatus("disconnected");
+    });
+
+    return () => {
+      socket.off("connect");
+      socket.off("authenticated");
+      socket.off("error");
+      socket.off("connect_error");
+      socket.off("appointmentUpdate");
+      socket.off("appointmentRequestSent");
+      socket.off("disconnect");
+      socket.disconnect();
+    };
+  }, [socket]);
+
   // Initial fetch
   useEffect(() => {
     fetchUserData();
     fetchDoctors();
+    fetchNotifications();
     if (activeSection === "appointments") {
       debouncedFetchAppointments({ timeFilter, statusFilter, doctorFilter });
     }
-  }, [activeSection]);
+  }, [activeSection, debouncedFetchAppointments]);
 
   // Handle logout
   const handleLogout = () => {
     console.log("[handleLogout] Logging out");
     localStorage.removeItem("token");
+    socket.disconnect();
     dispatch(logout());
     navigate("/auth/signin", { replace: true });
   };
@@ -360,7 +546,7 @@ export default function PatientDashboard() {
         }
       }
 
-      const response = await fetch("http://localhost:5000/api/patient/profile", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/patient/profile`, {
         method: "PUT",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -528,7 +714,15 @@ export default function PatientDashboard() {
       />
       <div className="flex-1 p-8">
         <div className="max-w-5xl mx-auto">
-          <PatientHeader userData={userData} />
+          <PatientHeader
+            userData={userData}
+            notifications={notifications}
+            toggleNotifications={toggleNotifications}
+            showNotifications={showNotifications}
+            markNotificationAsRead={markNotificationAsRead}
+            error={error}
+            socketStatus={socketStatus} // Pass for debugging
+          />
           {error && activeSection !== "appointments" && (
             <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-6">
               {error}

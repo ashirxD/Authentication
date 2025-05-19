@@ -1,3 +1,4 @@
+import React from "react";
 import {
   CalendarIcon,
   UserGroupIcon,
@@ -5,9 +6,12 @@ import {
   PencilIcon,
   XMarkIcon,
   ClipboardDocumentListIcon,
+  BellIcon,
 } from "@heroicons/react/24/outline";
 
+// Sidebar Component
 export const Sidebar = ({ activeSection, setActiveSection, handleLogout }) => {
+  console.log("[Sidebar] Rendering, activeSection:", activeSection);
   return (
     <div className="w-64 bg-white shadow-lg p-6 flex flex-col justify-between">
       <div>
@@ -34,7 +38,7 @@ export const Sidebar = ({ activeSection, setActiveSection, handleLogout }) => {
           <button
             onClick={() => setActiveSection("appointment-requests")}
             className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-              activeSection === "appointment-requests" ? "bg-blue-100 text-blue-600" : ""
+              activeSection === "ظهور-طلبات-الموعد" ? "bg-blue-100 text-blue-600" : ""
             }`}
           >
             <ClipboardDocumentListIcon className="w-6 h-6 mr-3" />
@@ -62,36 +66,88 @@ export const Sidebar = ({ activeSection, setActiveSection, handleLogout }) => {
   );
 };
 
-export const Header = ({ userData, availability }) => {
+// Header Component
+export const Header = ({
+  userData = {},
+  availability = { days: [], startTime: "", endTime: "" },
+  notifications = [],
+  toggleNotifications,
+  showNotifications,
+  markNotificationAsRead,
+  error,
+}) => {
+  console.log("[Header] Rendering, userData:", userData);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
   return (
-    <div className="mb-8 flex items-center space-x-4">
-      {userData.profilePicture && (
-        <img
-          src={`http://localhost:5000${userData.profilePicture}?t=${Date.now()}`}
-          alt="Profile"
-          className="w-12 h-12 rounded-full object-cover"
-          onError={(e) => console.error("[Header] Image load error:", userData.profilePicture, e)}
-        />
-      )}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-800">
-          Welcome, Dr. {userData.name || "Loading..."}!
-        </h1>
-        <p className="text-gray-600">Manage your practice efficiently from your dashboard.</p>
-        {userData.specialization && (
-          <p className="text-blue-600 mt-1">Specialization: {userData.specialization}</p>
+    <div className="mb-8 flex items-center justify-between">
+      <div className="flex items-center space-x-4">
+        {userData.profilePicture && (
+          <img
+            src={`${import.meta.env.VITE_API_URL}${userData.profilePicture}?t=${Date.now()}`}
+            alt="Profile"
+            className="w-12 h-12 rounded-full object-cover"
+            onError={(e) => console.error("[Header] Image error:", userData.profilePicture, e)}
+          />
         )}
-        {availability.startTime && availability.endTime && availability.days?.length > 0 && (
-          <p className="text-blue-600 mt-1">
-            Availability: {availability.days.join(", ")}, {availability.startTime} - {availability.endTime}
-          </p>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">
+            Welcome, Dr. {userData.name || "Loading..."}!
+          </h1>
+          <p className="text-gray-600">Manage your practice efficiently.</p>
+          {userData.specialization && (
+            <p className="text-blue-600 mt-1">Specialization: {userData.specialization}</p>
+          )}
+          {availability.startTime && availability.endTime && availability.days?.length > 0 && (
+            <p className="text-blue-600 mt-1">
+              Availability: {availability.days.join(", ")}, {availability.startTime} -{" "}
+              {availability.endTime}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="relative">
+        <button
+          onClick={toggleNotifications}
+          className="relative focus:outline-none p-2 rounded-full hover:bg-blue-100 transition"
+          aria-label="Notifications"
+        >
+          <BellIcon className="h-6 w-6 text-gray-700" />
+          {unreadCount > 0 && (
+            <span className="absolute right-0 top-0 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+        {showNotifications && (
+          <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto">
+            <div className="p-4">
+              <NotificationsList
+                notifications={notifications}
+                markNotificationAsRead={markNotificationAsRead}
+                error={error}
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>
   );
 };
 
-export const AppointmentsTable = ({ appointments, error }) => {
+// Appointments Table Component
+export const AppointmentsTable = React.memo(({ appointments = [], error }) => {
+  console.log("[AppointmentsTable] Rendering, appointments:", appointments);
+
+  if (!Array.isArray(appointments)) {
+    console.error("[AppointmentsTable] Invalid appointments prop:", appointments);
+    return (
+      <div className="text-red-600 bg-red-100 border border-red-400 rounded p-3">
+        Error: Invalid appointments data
+      </div>
+    );
+  }
+
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">Upcoming Appointments</h3>
@@ -114,30 +170,40 @@ export const AppointmentsTable = ({ appointments, error }) => {
               </tr>
             </thead>
             <tbody className="text-gray-600 text-sm font-light">
-              {appointments.map((appointment) => (
-                <tr
-                  key={appointment._id}
-                  className="border-b border-gray-200 even:bg-gray-50 hover:bg-gray-100"
-                >
-                  <td className="py-4 px-6 font-semibold">
-                    {appointment.patient?.name || "Unknown Patient"}
-                  </td>
-                  <td className="py-4 px-6">
-                    {appointment.date ? new Date(appointment.date).toISOString().split("T")[0] : "N/A"}
-                  </td>
-                  <td className="py-4 px-6 text-teal-600">{appointment.time || "N/A"}</td>
-                  <td className="py-4 px-6">{appointment.reason || "N/A"}</td>
-                </tr>
-              ))}
+              {appointments.map((appointment, index) => {
+                console.log("[AppointmentsTable] Appointment:", index, appointment);
+                const key = appointment?._id || `appt-${index}-${Date.now()}`;
+                return (
+                  <tr
+                    key={key}
+                    className="border-b border-gray-200 even:bg-gray-50 hover:bg-gray-100"
+                  >
+                    <td className="py-4 px-6 font-semibold">
+                      {appointment?.patient?.name || "Unknown Patient"}
+                    </td>
+                    <td className="py-4 px-6">
+                      {appointment?.date
+                        ? new Date(appointment.date).toISOString().split("T")[0]
+                        : "N/A"}
+                    </td>
+                    <td className="py-4 px-6 text-teal-600">
+                      {appointment?.time || "N/A"}
+                    </td>
+                    <td className="py-4 px-6">{appointment?.reason || "N/A"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
     </div>
   );
-};
+});
 
-export const PatientsList = ({ uniquePatients, error }) => {
+// Patients List Component
+export const PatientsList = ({ uniquePatients = [], error }) => {
+  console.log("[PatientsList] Rendering, uniquePatients:", uniquePatients);
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">My Patients</h3>
@@ -152,28 +218,28 @@ export const PatientsList = ({ uniquePatients, error }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {uniquePatients.map((patient) => (
             <div
-              key={patient._id}
+              key={patient?._id || `patient-${Date.now()}`}
               className="flex border border-gray-300 rounded-lg p-4 bg-white shadow-sm hover:shadow-md transition"
             >
               <div className="w-24 h-24 mr-5">
-                {patient.profilePicture ? (
+                {patient?.profilePicture ? (
                   <img
-                    src={`http://localhost:5000${patient.profilePicture}?t=${Date.now()}`}
-                    alt={`${patient.name}'s profile`}
+                    src={`${import.meta.env.VITE_API_URL}${patient.profilePicture}?t=${Date.now()}`}
+                    alt={`${patient.name || "Patient"}'s profile`}
                     className="w-full h-full object-cover rounded-full"
                     onError={(e) => {
-                      e.target.style.display = "none"; // Hide image if it fails to load
-                      console.error("[PatientsList] Image load error:", patient.profilePicture, e);
+                      e.target.style.display = "none";
+                      console.error("[PatientsList] Image error:", patient.profilePicture, e);
                     }}
                   />
                 ) : (
-                  <div className="w-full h-full bg-gray-100 rounded-full"></div> // Placeholder
+                  <div className="w-full h-full bg-gray-100 rounded-full"></div>
                 )}
               </div>
               <div className="flex-1">
-                <h4 className="text-lg font-semibold text-gray-800">{patient.name}</h4>
-                <p className="text-sm text-gray-600">Email: {patient.email}</p>
-                <p className="text-sm text-gray-600">Phone: {patient.phoneNumber}</p>
+                <h4 className="text-lg font-semibold text-gray-800">{patient?.name || "Unknown"}</h4>
+                <p className="text-sm text-gray-600">Email: {patient?.email || "N/A"}</p>
+                <p className="text-sm text-gray-600">Phone: {patient?.phoneNumber || "N/A"}</p>
               </div>
             </div>
           ))}
@@ -183,7 +249,46 @@ export const PatientsList = ({ uniquePatients, error }) => {
   );
 };
 
-export const AppointmentRequestsTable = ({ appointmentRequests, error, success, handleAcceptRequest, handleRejectRequest }) => {
+// Appointment Requests Table Component
+export const AppointmentRequestsTable = ({
+  appointmentRequests = [],
+  error,
+  success,
+  handleAcceptRequest,
+  handleRejectRequest,
+}) => {
+  console.log("[AppointmentRequestsTable] Rendering, appointmentRequests:", appointmentRequests);
+  const [loadingRequests, setLoadingRequests] = React.useState({});
+
+  const startLoading = (requestId) => {
+    setLoadingRequests((prev) => ({ ...prev, [requestId]: true }));
+  };
+  const stopLoading = (requestId) => {
+    setLoadingRequests((prev) => ({ ...prev, [requestId]: false }));
+  };
+
+  const handleAccept = async (requestId) => {
+    startLoading(requestId);
+    try {
+      await handleAcceptRequest(requestId);
+    } finally {
+      stopLoading(requestId);
+    }
+  };
+
+  const handleReject = async (requestId) => {
+    startLoading(requestId);
+    try {
+      await handleRejectRequest(requestId);
+    } finally {
+      stopLoading(requestId);
+    }
+  };
+
+  const pendingRequests = Array.isArray(appointmentRequests)
+    ? appointmentRequests.filter((request) => request?.status === "pending")
+    : [];
+
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">Appointment Requests</h3>
@@ -197,41 +302,52 @@ export const AppointmentRequestsTable = ({ appointmentRequests, error, success, 
           {error}
         </p>
       )}
-      {appointmentRequests.length === 0 ? (
+      {pendingRequests.length === 0 ? (
         <p className="text-gray-600">No pending appointment requests.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white rounded-lg shadow">
             <thead>
-              <tr className="bg-gray-100 text-gray-600 uppercase text-sm leading-normal">
-                <th className="py-3 px-6 text-left">Patient</th>
-                <th className="py-3 px-6 text-left">Date</th>
-                <th className="py-3 px-6 text-left">Time</th>
-                <th className="py-3 px-6 text-left">Reason</th>
-                <th className="py-3 px-6 text-center">Actions</th>
+              <tr className="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
+                <th className="py-4 px-6 text-left">Patient</th>
+                <th className="py-4 px-6 text-left">Date</th>
+                <th className="py-4 px-6 text-left">Time</th>
+                <th className="py-4 px-6 text-left">Reason</th>
+                <th className="py-4 px-6 text-left">Actions</th>
               </tr>
             </thead>
             <tbody className="text-gray-600 text-sm font-light">
-              {appointmentRequests.map((request) => (
-                <tr key={request._id} className="border-b border-gray-200 hover:bg-gray-50">
-                  <td className="py-3 px-6">{request.patient?.name || "Unknown Patient"}</td>
-                  <td className="py-3 px-6">
-                    {request.date ? new Date(request.date).toISOString().split("T")[0] : "N/A"}
+              {pendingRequests.map((request) => (
+                <tr
+                  key={request?._id || `request-${Date.now()}`}
+                  className="border-b border-gray-200 even:bg-gray-50 hover:bg-gray-100"
+                >
+                  <td className="py-4 px-6 font-semibold">
+                    {request?.patient?.name || "Unknown Patient"}
                   </td>
-                  <td className="py-3 px-6">{request.time || "N/A"}</td>
-                  <td className="py-3 px-6">{request.reason || "N/A"}</td>
-                  <td className="py-3 px-6 text-center space-x-2">
+                  <td className="py-4 px-6">
+                    {request?.date ? new Date(request.date).toISOString().split("T")[0] : "N/A"}
+                  </td>
+                  <td className="py-4 px-6 text-teal-600">{request?.time || "N/A"}</td>
+                  <td className="py-4 px-6">{request?.reason || "N/A"}</td>
+                  <td className="py-4 px-6">
                     <button
-                      onClick={() => handleAcceptRequest(request._id)}
-                      className="text-green-600 hover:text-green-800 px-3 py-1 rounded bg-green-100 hover:bg-green-200 transition"
+                      onClick={() => handleAccept(request._id)}
+                      disabled={loadingRequests[request._id]}
+                      className={`mr-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition ${
+                        loadingRequests[request._id] ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
                     >
-                      Accept
+                      {loadingRequests[request._id] ? "Processing..." : "Accept"}
                     </button>
                     <button
-                      onClick={() => handleRejectRequest(request._id)}
-                      className="text-red-600 hover:text-red-800 px-3 py-1 rounded bg-red-100 hover:bg-red-200 transition"
+                      onClick={() => handleReject(request._id)}
+                      disabled={loadingRequests[request._id]}
+                      className={`px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition ${
+                        loadingRequests[request._id] ? "opacity-50 cursor-not-allowed" : ""
+                      }`}
                     >
-                      Reject
+                      {loadingRequests[request._id] ? "Processing..." : "Reject"}
                     </button>
                   </td>
                 </tr>
@@ -244,9 +360,10 @@ export const AppointmentRequestsTable = ({ appointmentRequests, error, success, 
   );
 };
 
+// Edit Profile Form Component
 export const EditProfileForm = ({
-  editData,
-  availability,
+  editData = {},
+  availability = { days: [], startTime: "", endTime: "" },
   handleInputChange,
   handleFileChange,
   handleRemovePicture,
@@ -257,7 +374,16 @@ export const EditProfileForm = ({
   success,
   isLoading,
 }) => {
-  const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  console.log("[EditProfileForm] Rendering, editData:", editData);
+  const daysOfWeek = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+  ];
 
   return (
     <div>
@@ -284,7 +410,7 @@ export const EditProfileForm = ({
                   type="text"
                   id="name"
                   name="name"
-                  value={editData.name}
+                  value={editData.name || ""}
                   onChange={handleInputChange}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
                   required
@@ -301,7 +427,7 @@ export const EditProfileForm = ({
                   type="text"
                   id="specialization"
                   name="specialization"
-                  value={editData.specialization}
+                  value={editData.specialization || ""}
                   onChange={handleInputChange}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
                 />
@@ -319,7 +445,7 @@ export const EditProfileForm = ({
                   type="time"
                   id="startTime"
                   name="startTime"
-                  value={availability.startTime}
+                  value={availability.startTime || ""}
                   onChange={handleInputChange}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
                   required
@@ -336,7 +462,7 @@ export const EditProfileForm = ({
                   type="time"
                   id="endTime"
                   name="endTime"
-                  value={availability.endTime}
+                  value={availability.endTime || ""}
                   onChange={handleInputChange}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow hover:shadow-sm"
                   required
@@ -351,7 +477,7 @@ export const EditProfileForm = ({
                 <label
                   key={day}
                   className={`flex items-center justify-center px-4 py-2 rounded-full border cursor-pointer transition-all duration-200 ${
-                    availability.days.includes(day)
+                    availability.days?.includes(day)
                       ? "bg-blue-500 text-white border-blue-500 shadow-md"
                       : "bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100"
                   }`}
@@ -360,7 +486,7 @@ export const EditProfileForm = ({
                     type="checkbox"
                     name="days"
                     value={day}
-                    checked={availability.days.includes(day)}
+                    checked={availability.days?.includes(day) || false}
                     onChange={handleInputChange}
                     className="sr-only"
                   />
@@ -376,14 +502,17 @@ export const EditProfileForm = ({
             >
               Profile Picture
             </label>
-            {hasProfilePicture && (previewUrl || editData.profilePicture) && (
+            {hasProfilePicture && (previewUrl || editData.profilePicture) ? (
               <div className="relative mb-4 w-24 h-24">
                 <img
-                  src={previewUrl || `http://localhost:5000${editData.profilePicture}?t=${Date.now()}`}
+                  src={
+                    previewUrl ||
+                    `${import.meta.env.VITE_API_URL}${editData.profilePicture}?t=${Date.now()}`
+                  }
                   alt="Profile Preview"
                   className="w-24 h-24 rounded-full object-cover border-2 border-gray-200 shadow-sm"
                   onError={(e) =>
-                    console.error("[EditProfileForm] Image load error:", editData.profilePicture, e)
+                    console.error("[EditProfileForm] Image error:", editData.profilePicture, e)
                   }
                 />
                 <button
@@ -395,8 +524,7 @@ export const EditProfileForm = ({
                   <XMarkIcon className="w-4 h-4" />
                 </button>
               </div>
-            )}
-            {!hasProfilePicture && (
+            ) : (
               <input
                 type="file"
                 id="profilePicture"
@@ -419,7 +547,7 @@ export const EditProfileForm = ({
                 type="checkbox"
                 id="twoFAEnabled"
                 name="twoFAEnabled"
-                checked={editData.twoFAEnabled}
+                checked={editData.twoFAEnabled || false}
                 onChange={handleInputChange}
                 className="absolute opacity-0 w-full h-full cursor-pointer"
               />
@@ -474,6 +602,54 @@ export const EditProfileForm = ({
           </button>
         </form>
       </div>
+    </div>
+  );
+};
+
+// Notifications List Component
+export const NotificationsList = ({ notifications = [], markNotificationAsRead, error }) => {
+  console.log("[NotificationsList] Rendering, notifications:", notifications);
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
+      {error && (
+        <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4 animate-fade-in">
+          {error}
+        </p>
+      )}
+      {notifications.length === 0 ? (
+        <p className="text-gray-600">No notifications.</p>
+      ) : (
+        <ul className="space-y-2">
+          {notifications.map((notification) => (
+            <li
+              key={notification?._id || `notif-${Date.now()}`}
+              className={`p-3 rounded-lg transition ${
+                notification.read ? "bg-gray-100" : "bg-blue-50"
+              } hover:bg-blue-100`}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
+                  <p className="text-xs text-gray-500">
+                    {notification?.createdAt
+                      ? new Date(notification.createdAt).toLocaleString()
+                      : "Unknown time"}
+                  </p>
+                </div>
+                {!notification.read && (
+                  <button
+                    onClick={() => markNotificationAsRead(notification._id)}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    Mark as read
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 };
