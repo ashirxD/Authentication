@@ -64,7 +64,7 @@ const VerifyEmail = () => {
         setSuccessMessage('Email verified successfully! Redirecting to signin page...');
         setFormData({ email: '', otp: '' });
         setTimeout(() => {
-          navigate('/signin');
+          navigate('/auth/signin');
         }, 2000);
       } else {
         setErrors({ server: data.message || 'Email verification failed' });
@@ -213,7 +213,7 @@ const VerifyEmail = () => {
         </p>
         <p className="text-center mt-4 text-sm text-gray-600">
           Already verified?{' '}
-          <Link to="/signin" className="text-blue-600 font-medium hover:text-blue-800 transition-colors">
+          <Link to="/auth/signin" className="text-blue-600 font-medium hover:text-blue-800 transition-colors">
             Sign In
           </Link>
         </p>

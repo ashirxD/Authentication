@@ -272,6 +272,9 @@ router.get("/doctors/:id", async (req, res) => {
 });
 
 // Send appointment request
+// patient.js
+// patient.js
+// patient.js
 router.post("/appointment/request", async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
@@ -298,16 +301,66 @@ router.post("/appointment/request", async (req, res) => {
       return res.status(400).json({ message: "Invalid doctor ID format" });
     }
 
-    const doctor = await User.findById(doctorId);
+    if (!moment(date, "YYYY-MM-DD", true).isValid()) {
+      console.error("[POST /appointment/request] Invalid date format:", date);
+      return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD" });
+    }
+
+    if (!moment(time, "HH:mm", true).isValid()) {
+      console.error("[POST /appointment/request] Invalid time format:", time);
+      return res.status(400).json({ message: "Invalid time format. Use HH:mm" });
+    }
+
+    const doctor = await User.findById(doctorId).select("availability role");
     if (!doctor || doctor.role !== "doctor") {
       console.error("[POST /appointment/request] Doctor not found:", doctorId);
       return res.status(404).json({ message: "Doctor not found" });
     }
 
+    // Check if doctor is available on the selected day
+    const selectedDate = moment(date);
+    const dayOfWeek = selectedDate.format("dddd");
+    if (!doctor.availability?.days?.includes(dayOfWeek)) {
+      console.error("[POST /appointment/request] Doctor not available on:", dayOfWeek);
+      return res.status(400).json({ message: `Doctor not available on ${dayOfWeek}` });
+    }
+
+    // Check if time is within doctor's availability
+    const startTime = moment(`${date} ${doctor.availability.startTime}`, "YYYY-MM-DD HH:mm");
+    const endTime = moment(`${date} ${doctor.availability.endTime}`, "YYYY-MM-DD HH:mm");
+    const requestedTime = moment(`${date} ${time}`, "YYYY-MM-DD HH:mm");
+    const slotEndTime = requestedTime.clone().add(30, "minutes");
+
+    if (
+      !requestedTime.isValid() ||
+      !requestedTime.isSameOrAfter(startTime) ||
+      !slotEndTime.isSameOrBefore(endTime)
+    ) {
+      console.error("[POST /appointment/request] Time outside availability:", {
+        requestedTime: time,
+        startTime: doctor.availability.startTime,
+        endTime: doctor.availability.endTime,
+      });
+      return res.status(400).json({ message: "Requested time is outside doctor's availability" });
+    }
+
+    // Check if the slot is already booked (has an accepted appointment)
+    const existingAppointment = await AppointmentRequest.findOne({
+      doctor: doctorId,
+      date: selectedDate.format("YYYY-MM-DD"),
+      time,
+      status: "accepted",
+    });
+
+    if (existingAppointment) {
+      console.error("[POST /appointment/request] Slot already booked:", { doctorId, date, time });
+      return res.status(400).json({ message: "This time slot is already booked" });
+    }
+
     const appointmentRequest = new AppointmentRequest({
       patient: req.user.id,
       doctor: doctorId,
-      date,
+      date: selectedDate.format("YYYY-MM-DD"),
       time,
       reason,
       status: "pending",
@@ -428,5 +481,194 @@ router.post("test", (req, res) => {
   console.log("[POST /test] Received:", req.body);
   res.json({ message: "Test endpoint hit successfully" });
 }); 
+
+
+// patient.js
+// const moment = require("moment");
+
+// // Get available slots for a doctor on a specific date
+// router.get("/doctors/:id/slots", async (req, res) => {
+//   try {
+//     if (!req.user || !req.user.id) {
+//       console.error("[GET /doctors/:id/slots] Unauthorized: No user ID");
+//       return res.status(401).json({ message: "Unauthorized: Invalid user" });
+//     }
+
+//     const doctorId = req.params.id;
+//     const { date } = req.query; // Expect date in YYYY-MM-DD format
+//     console.log("[GET /doctors/:id/slots] Received:", { doctorId, date });
+
+//     if (!date || !moment(date, "YYYY-MM-DD", true).isValid()) {
+//       console.error("[GET /doctors/:id/slots] Invalid date format:", date);
+//       return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD" });
+//     }
+
+//     if (!doctorId.match(/^[0-9a-fA-F]{24}$/)) {
+//       console.error("[GET /doctors/:id/slots] Invalid doctorId format:", doctorId);
+//       return res.status(400).json({ message: "Invalid doctor ID format" });
+//     }
+
+//     const doctor = await User.findById(doctorId).select("availability role");
+//     if (!doctor || doctor.role !== "doctor") {
+//       console.error("[GET /doctors/:id/slots] Doctor not found:", doctorId);
+//       return res.status(404).json({ message: "Doctor not found" });
+//     }
+
+//     const selectedDate = moment(date);
+//     const dayOfWeek = selectedDate.format("dddd");
+//     if (!doctor.availability?.days?.includes(dayOfWeek)) {
+//       console.warn("[GET /doctors/:id/slots] Doctor not available on:", dayOfWeek);
+//       return res.status(400).json({ message: `Doctor not available on ${dayOfWeek}` });
+//     }
+
+//     // Parse start and end times
+//     const startTime = moment(`${date} ${doctor.availability.startTime}`, "YYYY-MM-DD HH:mm");
+//     const endTime = moment(`${date} ${doctor.availability.endTime}`, "YYYY-MM-DD HH:mm");
+
+//     if (!startTime.isValid() || !endTime.isValid()) {
+//       console.error("[GET /doctors/:id/slots] Invalid time format:", {
+//         startTime: doctor.availability.startTime,
+//         endTime: doctor.availability.endTime,
+//       });
+//       return res.status(400).json({ message: "Invalid time format in doctor availability" });
+//     }
+
+//     // Generate 30-minute slots
+//     const slots = [];
+//     let currentTime = startTime.clone();
+//     while (currentTime.isBefore(endTime) && currentTime.clone().add(30, "minutes").isSameOrBefore(endTime)) {
+//       slots.push({
+//         start: currentTime.format("HH:mm"),
+//         end: currentTime.clone().add(30, "minutes").format("HH:mm"),
+//       });
+//       currentTime.add(30, "minutes");
+//     }
+
+//     // Fetch booked slots for the doctor on the selected date
+//     const bookedAppointments = await AppointmentRequest.find({
+//       doctor: doctorId,
+//       date: selectedDate.format("YYYY-MM-DD"),
+//       status: "accepted",
+//     }).select("time");
+
+//     const bookedTimes = bookedAppointments.map((appt) => appt.time);
+
+//     // Filter out booked slots
+//     const availableSlots = slots.filter((slot) => !bookedTimes.includes(slot.start));
+
+//     console.log("[GET /doctors/:id/slots] Generated:", {
+//       doctorId,
+//       date,
+//       totalSlots: slots.length,
+//       availableSlots: availableSlots.length,
+//       bookedTimes,
+//     });
+
+//     res.json(availableSlots);
+//   } catch (err) {
+//     console.error("[GET /doctors/:id/slots] Error:", {
+//       message: err.message,
+//       stack: err.stack,
+//     });
+//     if (err.kind === "ObjectId") {
+//       return res.status(400).json({ message: "Invalid doctor ID format" });
+//     }
+//     res.status(500).json({ message: "Server error" });
+//   }
+// });
+
+// patient.js
+const moment = require("moment");
+
+// Get available slots for a doctor on a specific date
+router.get("/doctors/:id/slots", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[GET /doctors/:id/slots] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const doctorId = req.params.id;
+    const { date } = req.query; // Expect date in YYYY-MM-DD format
+    console.log("[GET /doctors/:id/slots] Received:", { doctorId, date });
+
+    if (!date || !moment(date, "YYYY-MM-DD", true).isValid()) {
+      console.error("[GET /doctors/:id/slots] Invalid date format:", date);
+      return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD" });
+    }
+
+    if (!doctorId.match(/^[0-9a-fA-F]{24}$/)) {
+      console.error("[GET /doctors/:id/slots] Invalid doctorId format:", doctorId);
+      return res.status(400).json({ message: "Invalid doctor ID format" });
+    }
+
+    const doctor = await User.findById(doctorId).select("availability role name");
+    if (!doctor || doctor.role !== "doctor") {
+      console.error("[GET /doctors/:id/slots] Doctor not found:", doctorId);
+      return res.status(404).json({ message: "Doctor not found" });
+    }
+
+    const selectedDate = moment(date);
+    const dayOfWeek = selectedDate.format("dddd");
+    if (!doctor.availability?.days?.includes(dayOfWeek)) {
+      console.warn("[GET /doctors/:id/slots] Doctor not available on:", dayOfWeek);
+      return res.status(400).json({ message: `Doctor not available on ${dayOfWeek}` });
+    }
+
+    // Parse start and end times
+    const startTime = moment(`${date} ${doctor.availability.startTime}`, "YYYY-MM-DD HH:mm");
+    const endTime = moment(`${date} ${doctor.availability.endTime}`, "YYYY-MM-DD HH:mm");
+
+    if (!startTime.isValid() || !endTime.isValid()) {
+      console.error("[GET /doctors/:id/slots] Invalid time format:", {
+        startTime: doctor.availability.startTime,
+        endTime: doctor.availability.endTime,
+      });
+      return res.status(400).json({ message: "Invalid time format in doctor availability" });
+    }
+
+    // Generate 30-minute slots
+    const slots = [];
+    let currentTime = startTime.clone();
+    while (currentTime.isBefore(endTime) && currentTime.clone().add(30, "minutes").isSameOrBefore(endTime)) {
+      slots.push({
+        start: currentTime.format("HH:mm"),
+        end: currentTime.clone().add(30, "minutes").format("HH:mm"),
+      });
+      currentTime.add(30, "minutes");
+    }
+
+    // Fetch booked slots for the doctor on the selected date
+    const bookedAppointments = await AppointmentRequest.find({
+      doctor: doctorId,
+      date: selectedDate.format("YYYY-MM-DD"),
+      status: "accepted",
+    }).select("time");
+
+    const bookedTimes = bookedAppointments.map((appt) => appt.time);
+
+    // Filter out booked slots
+    const availableSlots = slots.filter((slot) => !bookedTimes.includes(slot.start));
+
+    console.log("[GET /doctors/:id/slots] Generated:", {
+      doctorId,
+      date,
+      totalSlots: slots.length,
+      availableSlots: availableSlots.length,
+      bookedTimes,
+    });
+
+    res.json(availableSlots);
+  } catch (err) {
+    console.error("[GET /doctors/:id/slots] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
+    if (err.kind === "ObjectId") {
+      return res.status(400).json({ message: "Invalid doctor ID format" });
+    }
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 module.exports = router;
