@@ -1,5 +1,4 @@
-import React from "react";
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { logout, setAvailability as setReduxAvailability } from "../redux/slices/authSlice";
@@ -43,6 +42,15 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// Debounce utility
+function debounce(func, wait) {
+  let timeout;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  };
+}
+
 export default function DoctorDashboard() {
   console.log("[DoctorDashboard] Rendering");
   const { availability, dispatch: contextDispatch } = useAvailability() || {};
@@ -69,21 +77,30 @@ export default function DoctorDashboard() {
   const [appointments, setAppointments] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [socketStatus, setSocketStatus] = useState("disconnected"); // Track socket status
+  const [socketStatus, setSocketStatus] = useState("disconnected");
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const reduxUser = useSelector((state) => state.auth.user) || null;
 
+  // Compute unread count for Header
+  const unreadCount = useMemo(() => {
+    const count = notifications.filter((n) => !n.read).length;
+    console.log("[DoctorDashboard] Computed unreadCount:", count);
+    return count;
+  }, [notifications]);
+
   // Initialize Socket.IO
   const socket = useMemo(() => {
-    const token = localStorage.getItem("token") || "";
-    console.log("[Socket.IO] Initializing with token:", token.slice(0, 20) + "...");
-    return io(import.meta.env.VITE_API_URL || "http://localhost:5000", {
+    const token = localStorage.getItem("token")?.replace(/^Bearer\s+/i, "") || "";
+    const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+    console.log("[Socket.IO] Initializing with URL:", apiUrl, "token:", token.slice(0, 20) + "...");
+    return io(apiUrl, {
       auth: { token },
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      timeout: 20000,
     });
   }, []);
 
@@ -121,7 +138,6 @@ export default function DoctorDashboard() {
           Authorization: `Bearer ${token}`,
         },
       });
-      console.log("[fetchUserData] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[fetchUserData] Failed:", text);
@@ -192,7 +208,6 @@ export default function DoctorDashboard() {
           Authorization: `Bearer ${token}`,
         },
       });
-      console.log("[fetchAppointmentRequests] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[fetchAppointmentRequests] Failed:", text);
@@ -229,9 +244,7 @@ export default function DoctorDashboard() {
           Authorization: `Bearer ${token}`,
         },
       });
-      console.log("[fetchAppointments] Status:", response.status);
       const text = await response.text();
-      console.log("[fetchAppointments] Raw response:", text);
       let data;
       try {
         data = JSON.parse(text);
@@ -275,26 +288,26 @@ export default function DoctorDashboard() {
           Authorization: `Bearer ${token}`,
         },
       });
-      console.log("[fetchNotifications] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[fetchNotifications] Failed:", text);
         setError("Failed to fetch notifications");
-        setNotifications([]);
         return;
       }
       const data = await response.json();
       console.log("[fetchNotifications] Data:", data);
-      setNotifications(Array.isArray(data) ? data : []);
+      setNotifications((prev) => {
+        const merged = [...data, ...prev.filter((n) => !data.some((d) => d._id === n._id))];
+        return merged.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      });
     } catch (err) {
       console.error("[fetchNotifications] Error:", err);
       setError("Failed to fetch notifications");
-      setNotifications([]);
     }
   };
 
   // Mark notification as read
-  const markNotificationAsRead = async (notificationId) => {
+  const markNotificationAsRead = useCallback(async (notificationId) => {
     try {
       const token = localStorage.getItem("token");
       if (!token) {
@@ -312,15 +325,13 @@ export default function DoctorDashboard() {
           "Content-Type": "application/json",
         },
       });
-      console.log("[markNotificationAsRead] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[markNotificationAsRead] Failed:", text);
         setError("Failed to mark notification as read");
         return;
       }
-      const data = await response.json();
-      console.log("[markNotificationAsRead] Data:", data);
+      console.log("[markNotificationAsRead] Success");
       setNotifications((prev) =>
         prev.map((notif) =>
           notif._id === notificationId ? { ...notif, read: true } : notif
@@ -330,38 +341,58 @@ export default function DoctorDashboard() {
       console.error("[markNotificationAsRead] Error:", err);
       setError("Failed to mark notification as read");
     }
-  };
+  }, [dispatch, navigate]);
 
-  // Main effect for initialization
+  // Debounced notification update
+  const debouncedSetNotifications = useCallback(
+    debounce((newNotifications) => {
+      setNotifications(newNotifications);
+    }, 500),
+    []
+  );
+
+  // Token validation effect
   useEffect(() => {
-    console.log("[useEffect] activeSection:", activeSection, "showNotifications:", showNotifications);
     const token = localStorage.getItem("token");
     if (!token) {
       console.log("[useEffect] No token, redirecting to signin");
       navigate("/auth/signin", { replace: true });
-      return;
     }
+  }, [navigate]);
 
+  // Initialization effect
+  useEffect(() => {
+    console.log("[useEffect] Active section changed:", activeSection);
     const initialize = async () => {
       setIsLoading(true);
-      await Promise.all([
-        fetchUserData(),
-        activeSection === "appointment-requests" && fetchAppointmentRequests(),
-        (activeSection === "patients" || activeSection === "appointments") && fetchAppointments(),
-        showNotifications && fetchNotifications(),
-      ]);
-      setIsLoading(false);
+      try {
+        const fetchPromises = [fetchUserData(), fetchNotifications()];
+        if (activeSection === "appointment-requests") {
+          fetchPromises.push(fetchAppointmentRequests());
+        }
+        if (activeSection === "patients" || activeSection === "appointments") {
+          fetchPromises.push(fetchAppointments());
+        }
+        await Promise.all(fetchPromises);
+      } catch (err) {
+        console.error("[useEffect] Initialization error:", err);
+        setError("Initialization failed");
+      } finally {
+        setIsLoading(false);
+      }
     };
-
     initialize();
+  }, [activeSection, dispatch, navigate]);
 
+  // Socket.IO effect
+  useEffect(() => {
+    console.log("[useEffect] Setting up Socket.IO");
     socket.on("connect", () => {
       console.log("[Socket.IO] Connected to server");
       setSocketStatus("connected");
-      const token = localStorage.getItem("token") || "";
-      const cleanToken = token.replace(/^Bearer\s+/i, "");
-      console.log("[Socket.IO] Emitting authenticate with token:", cleanToken.slice(0, 20) + "...");
-      socket.emit("authenticate", cleanToken);
+      const token = localStorage.getItem("token")?.replace(/^Bearer\s+/i, "") || "";
+      socket.emit("authenticate", token);
+      socket.emit("join", reduxUser?._id || userData._id || "unknown");
     });
 
     socket.on("authenticated", () => {
@@ -373,27 +404,35 @@ export default function DoctorDashboard() {
       console.error("[Socket.IO] Server error:", error);
       setError(`Socket error: ${error}`);
       setSocketStatus("error");
+      if (error === "Authentication failed") {
+        dispatch(logout());
+        navigate("/auth/signin", { replace: true });
+      }
     });
 
     socket.on("connect_error", (err) => {
       console.error("[Socket.IO] Connection error:", err.message);
       setError(`Socket connection failed: ${err.message}`);
-      setSocketStatus("error");
+      setSocketStatus("disconnected");
     });
 
     socket.on("newAppointmentRequest", (request) => {
       console.log("[Socket.IO] New appointment request:", request);
-      setNotifications((prev) => {
+      debouncedSetNotifications((prev) => {
         const newNotification = {
-          _id: request.notificationId || `temp-${Date.now()}`,
+          _id: request.notificationId || request._id || `temp-${Date.now()}`,
           message: request.message || `New appointment request from ${request.patient?.name || "Unknown"}`,
           type: "appointment_request",
-          appointmentId: request,
+          appointmentId: request._id,
           read: false,
-          createdAt: new Date(),
+          createdAt: new Date(request.createdAt || Date.now()),
         };
-        console.log("[Socket.IO] Adding notification:", newNotification);
-        return [newNotification, ...prev];
+        const updated = [
+          newNotification,
+          ...prev.filter((n) => n._id !== newNotification._id),
+        ];
+        console.log("[Socket.IO] Updated notifications:", updated);
+        return updated.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       });
       if (activeSection === "appointment-requests") {
         fetchAppointmentRequests();
@@ -402,17 +441,21 @@ export default function DoctorDashboard() {
 
     socket.on("appointmentUpdate", ({ requestId, status, message, notificationId }) => {
       console.log("[Socket.IO] Appointment update:", { requestId, status, message, notificationId });
-      setNotifications((prev) => {
+      debouncedSetNotifications((prev) => {
         const newNotification = {
           _id: notificationId || `temp-${Date.now()}`,
           message: message || `Appointment ${status}`,
           type: `appointment_${status}`,
-          appointmentId: { _id: requestId },
+          appointmentId: requestId,
           read: false,
           createdAt: new Date(),
         };
-        console.log("[Socket.IO] Adding notification:", newNotification);
-        return [newNotification, ...prev];
+        const updated = [
+          newNotification,
+          ...prev.filter((n) => n._id !== newNotification._id),
+        ];
+        console.log("[Socket.IO] Updated notifications:", updated);
+        return updated.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       });
       if (activeSection === "appointment-requests") {
         fetchAppointmentRequests();
@@ -427,7 +470,10 @@ export default function DoctorDashboard() {
       setSocketStatus("disconnected");
     });
 
+    socket.connect();
+
     return () => {
+      console.log("[useEffect] Cleaning up Socket.IO");
       socket.off("connect");
       socket.off("authenticated");
       socket.off("error");
@@ -437,7 +483,20 @@ export default function DoctorDashboard() {
       socket.off("disconnect");
       socket.disconnect();
     };
-  }, [navigate, activeSection, showNotifications, dispatch, socket]);
+  }, [socket, dispatch, navigate, reduxUser, userData._id, activeSection]);
+
+  // Auto-close notifications effect
+  useEffect(() => {
+    if (showNotifications && notifications.every((n) => n.read)) {
+      console.log("[useEffect] All notifications read, closing dropdown");
+      setShowNotifications(false);
+    }
+  }, [notifications, showNotifications]);
+
+  // Log render loop debugging
+  useEffect(() => {
+    console.log("[useEffect] Render loop check - unreadCount:", unreadCount, "showNotifications:", showNotifications);
+  }, [unreadCount, showNotifications]);
 
   // Handle logout
   const handleLogout = () => {
@@ -520,7 +579,6 @@ export default function DoctorDashboard() {
           name: editData.name,
         }),
       });
-      console.log("[handleRemovePicture] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[handleRemovePicture] Failed:", text);
@@ -593,7 +651,6 @@ export default function DoctorDashboard() {
         },
         body: formData,
       });
-      console.log("[handleProfileUpdate] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[handleProfileUpdate] Failed:", text);
@@ -655,7 +712,6 @@ export default function DoctorDashboard() {
         },
         body: JSON.stringify({ requestId }),
       });
-      console.log("[handleAcceptRequest] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[handleAcceptRequest] Failed:", text);
@@ -697,7 +753,6 @@ export default function DoctorDashboard() {
         },
         body: JSON.stringify({ requestId }),
       });
-      console.log("[handleRejectRequest] Status:", response.status);
       if (!response.ok) {
         const text = await response.text();
         console.error("[handleRejectRequest] Failed:", text);
@@ -720,6 +775,7 @@ export default function DoctorDashboard() {
       if (!prev) {
         fetchNotifications();
       }
+      console.log("[toggleNotifications] showNotifications:", !prev);
       return !prev;
     });
   };
@@ -734,7 +790,6 @@ export default function DoctorDashboard() {
       );
     }
 
-    // Compute unique patients
     const uniquePatients = Array.isArray(appointments)
       ? Array.from(
           new Map(
@@ -804,13 +859,6 @@ export default function DoctorDashboard() {
     }
   };
 
-  // Redirect to signin if no token
-  if (!localStorage.getItem("token")) {
-    console.log("[DoctorDashboard] No token, redirecting to signin");
-    navigate("/auth/signin", { replace: true });
-    return null;
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-purple-100 to-pink-100 flex">
       <style jsx>{`
@@ -836,15 +884,20 @@ export default function DoctorDashboard() {
       <div className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">
           <Header
+            key={`header-${unreadCount}`}
             userData={userData}
             availability={availability || { days: [], startTime: "", endTime: "" }}
             notifications={notifications}
+            unreadCount={unreadCount}
             toggleNotifications={toggleNotifications}
             showNotifications={showNotifications}
             markNotificationAsRead={markNotificationAsRead}
             error={error}
-            socketStatus={socketStatus} // Pass socket status for debugging
+            socketStatus={socketStatus}
           />
+          <div className="text-sm text-gray-600 mb-4">
+            Socket Status: <span className={socketStatus === "authenticated" ? "text-green-600" : "text-red-600"}>{socketStatus}</span>
+          </div>
           {renderContent()}
         </div>
       </div>

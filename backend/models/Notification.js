@@ -1,8 +1,7 @@
-// models/Notification.js
 const mongoose = require("mongoose");
 
 const notificationSchema = new mongoose.Schema({
-  userId: {
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: true,
@@ -13,7 +12,7 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["appointment_request", "appointment_status"],
+    enum: ["appointment_request", "appointment_accepted", "appointment_rejected"],
     required: true,
   },
   appointmentId: {

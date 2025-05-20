@@ -6,7 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const http = require("http");
 const { Server } = require("socket.io");
-const jwt = require("jsonwebtoken"); // Add jsonwebtoken
+const jwt = require("jsonwebtoken");
 
 console.log("Starting server...");
 
@@ -17,7 +17,10 @@ const io = new Server(server, {
     origin: process.env.FRONTEND_URL || "http://localhost:5173",
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   },
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 // Ensure uploads folder exists
@@ -107,35 +110,62 @@ const notificationSchema = new mongoose.Schema({
 });
 const Notification = mongoose.model("Notification", notificationSchema);
 
-// Socket.IO Logic
-const verifyToken = (token) => {
-  try {
-    return jwt.verify(token, process.env.JWT_SECRET);
-  } catch (err) {
-    console.error("[verifyToken] Error:", err.message);
-    return null;
+// Socket.IO Authentication
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  console.log("[Socket.IO] Authenticating:", { token: token?.slice(0, 20) + "...", timestamp: new Date().toISOString() });
+  if (!token) {
+    console.error("[Socket.IO] No token provided", { timestamp: new Date().toISOString() });
+    return next(new Error("Authentication failed"));
   }
-};
-
-io.on("connection", (socket) => {
-  console.log("[Socket.IO] User connected:", socket.id);
-
-  socket.on("authenticate", (token) => {
-    console.log("[Socket.IO] Authenticating token:", token.slice(0, 20) + "...");
-    const user = verifyToken(token);
-    if (!user) {
-      console.error("[Socket.IO] Authentication failed for socket:", socket.id);
-      socket.emit("error", "Authentication failed");
-      socket.disconnect();
-      return;
+  try {
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    if (!user.id || !['patient', 'doctor'].includes(user.role)) {
+      console.error("[Socket.IO] Invalid user data:", { id: user.id, role: user.role, timestamp: new Date().toISOString() });
+      return next(new Error("Invalid user data"));
     }
     socket.userId = user.id;
-    socket.join(user.id);
-    console.log(`[Socket.IO] User ${user.id} authenticated and joined room`);
+    socket.role = user.role;
+    console.log("[Socket.IO] Authenticated:", { userId: socket.userId, role: socket.role, timestamp: new Date().toISOString() });
+    next();
+  } catch (err) {
+    console.error("[Socket.IO] Token verification failed:", err.message, { timestamp: new Date().toISOString() });
+    return next(new Error("Authentication failed"));
+  }
+});
+
+// Socket.IO Connection
+io.on("connection", (socket) => {
+  console.log("[Socket.IO] User connected:", { socketId: socket.id, userId: socket.userId, role: socket.role, timestamp: new Date().toISOString() });
+
+  socket.join(socket.userId.toString());
+  console.log("[Socket.IO] Joined room:", socket.userId, { timestamp: new Date().toISOString() });
+  socket.emit("authenticated", { userId: socket.userId });
+
+  socket.on("join", (userId) => {
+    if (socket.userId === userId) {
+      console.log("[Socket.IO] Reconfirmed join for room:", userId, { timestamp: new Date().toISOString() });
+    } else {
+      console.error("[Socket.IO] Join failed: ID mismatch", { requested: userId, actual: socket.userId, timestamp: new Date().toISOString() });
+      socket.emit("error", "Join failed: Invalid user ID");
+    }
   });
 
-  socket.on("disconnect", () => {
-    console.log("[Socket.IO] User disconnected:", socket.id);
+  socket.on("disconnect", (reason) => {
+    console.log("[Socket.IO] User disconnected:", { socketId: socket.id, userId: socket.userId, reason, timestamp: new Date().toISOString() });
+  });
+
+  socket.on("reconnect_attempt", () => {
+    console.log("[Socket.IO] Reconnect attempt:", { socketId: socket.id, userId: socket.userId, timestamp: new Date().toISOString() });
+  });
+
+  socket.on("error", (err) => {
+    console.error("[Socket.IO] Socket error:", { error: err, socketId: socket.id, userId: socket.userId, timestamp: new Date().toISOString() });
+  });
+
+  // Log all emissions
+  socket.onAny((event, ...args) => {
+    console.log("[Socket.IO] Event emitted:", { event, args, userId: socket.userId, timestamp: new Date().toISOString() });
   });
 });
 
@@ -153,7 +183,7 @@ try {
         .sort({ createdAt: -1 });
       res.json(notifications);
     } catch (err) {
-      console.error("[GET /api/notifications] Error:", err);
+      console.error("[GET /api/notifications] Error:", err, { timestamp: new Date().toISOString() });
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -169,14 +199,14 @@ try {
       await notification.save();
       res.json(notification);
     } catch (err) {
-      console.error("[PUT /api/notifications/:id/read] Error:", err);
+      console.error("[PUT /api/notifications/:id/read] Error:", err, { timestamp: new Date().toISOString() });
       res.status(500).json({ message: "Server error" });
     }
   });
 
   console.log("Routes loaded successfully");
 } catch (err) {
-  console.error("Error loading routes:", err);
+  console.error("Error loading routes:", err, { timestamp: new Date().toISOString() });
   process.exit(1);
 }
 
@@ -197,6 +227,7 @@ app.use((err, req, res, next) => {
     stack: err.stack,
     path: req.path,
     method: req.method,
+    timestamp: new Date().toISOString(),
   });
   res.status(500).json({ message: "Internal server error" });
 });

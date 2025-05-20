@@ -11,6 +11,7 @@ import {
 
 // Sidebar Component
 export function PatientSidebar({ activeSection, setActiveSection, handleLogout }) {
+  console.log("[PatientSidebar] Rendering, activeSection:", activeSection);
   return (
     <div className="w-64 bg-white shadow p-6 flex flex-col justify-between">
       <div>
@@ -69,24 +70,35 @@ export function PatientSidebar({ activeSection, setActiveSection, handleLogout }
 
 // Header Component
 export function PatientHeader({
-  userData,
+  userData = {},
   notifications = [],
+  unreadCount = 0,
   toggleNotifications,
   showNotifications,
   markNotificationAsRead,
-  error,
+  socketStatus,
 }) {
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  console.log("[PatientHeader] Rendering, props:", {
+    userData: userData.name,
+    unreadCount,
+    notificationsLength: notifications.length,
+    notificationIds: notifications.map(n => n._id),
+    showNotifications,
+    socketStatus,
+  });
 
   return (
-    <div className="mb-8 flex items-center justify-between">
+    <div key={`header-${unreadCount}`} className="mb-8 flex items-center justify-between">
       <div className="flex items-center space-x-4">
         {userData.profilePicture && userData.profilePicture !== "" && (
           <img
-            src={`http://localhost:5000${userData.profilePicture}?t=${Date.now()}`}
+            src={`${import.meta.env.VITE_API_URL}${userData.profilePicture}?t=${Date.now()}`}
             alt="Profile"
             className="w-12 h-12 rounded-full object-cover"
-            onError={(e) => console.error("[PatientHeader] Image load error:", userData.profilePicture, e)}
+            onError={(e) => {
+              e.target.src = "/fallback-profile.png";
+              console.error("[PatientHeader] Image error:", userData.profilePicture, e);
+            }}
           />
         )}
         <div>
@@ -112,17 +124,59 @@ export function PatientHeader({
           )}
         </button>
         {showNotifications && (
-          <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto">
+          <div className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg z-10 max-h-96 overflow-y-auto animate-fade-in">
             <div className="p-4">
               <NotificationsList
                 notifications={notifications}
                 markNotificationAsRead={markNotificationAsRead}
-                error={error}
               />
             </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Notifications List Component
+export function NotificationsList({ notifications = [], markNotificationAsRead }) {
+  console.log("[NotificationsList] Rendering, notifications:", notifications);
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
+      {notifications.length === 0 ? (
+        <p className="text-gray-600">No notifications.</p>
+      ) : (
+        <ul className="space-y-2">
+          {notifications.map((notification) => (
+            <li
+              key={notification?._id || `notif-${Date.now()}`}
+              className={`p-3 rounded-lg transition ${
+                notification.read ? "bg-gray-100" : "bg-blue-50"
+              } hover:bg-blue-100`}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
+                  <p className="text-xs text-gray-500">
+                    {notification?.createdAt
+                      ? new Date(notification.createdAt).toLocaleString()
+                      : "Unknown time"}
+                  </p>
+                </div>
+                {!notification.read && (
+                  <button
+                    onClick={() => markNotificationAsRead(notification._id)}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    Mark as read
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -139,6 +193,7 @@ export function AppointmentsSection({
   clearFilters,
   doctors,
 }) {
+  console.log("[AppointmentsSection] Rendering, filters:", { timeFilter, statusFilter, doctorFilter });
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -248,6 +303,7 @@ export function AppointmentsSection({
 
 // Medical Records Section
 export function MedicalRecordsSection({ medicalRecords }) {
+  console.log("[MedicalRecordsSection] Rendering, records:", medicalRecords.length);
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">
@@ -289,6 +345,7 @@ export function EditProfileSection({
   previewUrl,
   userData,
 }) {
+  console.log("[EditProfileSection] Rendering, editData:", editData);
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">
@@ -317,7 +374,7 @@ export function EditProfileSection({
               type="text"
               id="name"
               name="name"
-              value={editData.name}
+              value={editData.name || ""}
               onChange={handleInputChange}
               className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
@@ -334,7 +391,7 @@ export function EditProfileSection({
               type="tel"
               id="phoneNumber"
               name="phoneNumber"
-              value={editData.phoneNumber}
+              value={editData.phoneNumber || ""}
               onChange={handleInputChange}
               className="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="e.g., +1234567890 or 123-456-7890"
@@ -352,11 +409,14 @@ export function EditProfileSection({
                 <img
                   src={
                     previewUrl ||
-                    `http://localhost:5000${userData.profilePicture}?t=${Date.now()}`
+                    `${import.meta.env.VITE_API_URL}${userData.profilePicture}?t=${Date.now()}`
                   }
                   alt="Profile Preview"
                   className="w-24 h-24 rounded-full object-cover"
-                  onError={(e) => console.error("[EditProfileSection] Image load error:", userData.profilePicture, e)}
+                  onError={(e) => {
+                    e.target.src = "/fallback-profile.png";
+                    console.error("[EditProfileSection] Image error:", userData.profilePicture, e);
+                  }}
                 />
                 <button
                   type="button"
@@ -379,26 +439,32 @@ export function EditProfileSection({
               />
             )}
           </div>
-          <div className="mb-4 flex items-center">
+          <div className="mb-4 flex items-center space-x-4">
             <label
               htmlFor="twoFAEnabled"
-              className="text-gray-700 font-medium mr-3"
+              className="text-gray-700 font-medium"
             >
               Two-Factor Authentication
             </label>
-            <div className="relative inline-block w-10 align-middle select-none transition duration-200 ease-in">
+            <div className="relative inline-block w-12 h-6">
               <input
                 type="checkbox"
                 id="twoFAEnabled"
                 name="twoFAEnabled"
-                checked={editData.twoFAEnabled}
+                checked={editData.twoFAEnabled || false}
                 onChange={handleInputChange}
-                className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"
+                className="absolute opacity-0 w-full h-full cursor-pointer"
               />
-              <label
-                htmlFor="twoFAEnabled"
-                className="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"
-              ></label>
+              <div
+                className={`w-full h-full rounded-full transition-colors duration-200 ${
+                  editData.twoFAEnabled ? "bg-blue-500" : "bg-gray-300"
+                }`}
+              ></div>
+              <div
+                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transform transition-transform duration-200 ${
+                  editData.twoFAEnabled ? "translate-x-6" : "translate-x-0"
+                }`}
+              ></div>
             </div>
           </div>
           <button
@@ -420,6 +486,7 @@ export function EditProfileSection({
 
 // Doctors Section
 export function DoctorsSection({ doctors, error, navigate }) {
+  console.log("[DoctorsSection] Rendering, doctors:", doctors.length);
   return (
     <div>
       <h3 className="text-2xl font-semibold text-gray-800 mb-4">
@@ -440,20 +507,20 @@ export function DoctorsSection({ doctors, error, navigate }) {
               className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition cursor-pointer"
               onClick={() => {
                 if (doctor._id) {
-                  console.log("[DoctorsSection] Navigating to doctor profile:", doctor._id);
                   navigate(`/doctor/${doctor._id}`);
-                } else {
-                  console.error("[DoctorsSection] Missing doctor._id:", doctor);
                 }
               }}
             >
               <div className="flex items-center space-x-4">
                 {doctor.profilePicture && (
                   <img
-                    src={`http://localhost:5000${doctor.profilePicture}?t=${Date.now()}`}
+                    src={`${import.meta.env.VITE_API_URL}${doctor.profilePicture}?t=${Date.now()}`}
                     alt={`${doctor.name}'s Profile`}
                     className="w-16 h-16 rounded-full object-cover"
-                    onError={(e) => console.error("[DoctorsSection] Doctor image load error:", doctor.profilePicture, e)}
+                    onError={(e) => {
+                      e.target.src = "/fallback-profile.png";
+                      console.error("[DoctorsSection] Image error:", doctor.profilePicture, e);
+                    }}
                   />
                 )}
                 <div>
@@ -476,10 +543,7 @@ export function DoctorsSection({ doctors, error, navigate }) {
                 onClick={(e) => {
                   e.stopPropagation();
                   if (doctor._id && typeof doctor._id === "string" && doctor._id.trim() !== "") {
-                    console.log("[DoctorsSection] Navigating to book-appointment with doctorId:", doctor._id);
                     navigate(`/book-appointment/${doctor._id}`);
-                  } else {
-                    console.error("[DoctorsSection] Invalid doctor._id for booking:", doctor);
                   }
                 }}
               >
@@ -488,54 +552,6 @@ export function DoctorsSection({ doctors, error, navigate }) {
             </div>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-// Notifications List Component (Copied from Doctor's Dashboard for Consistency)
-export function NotificationsList({ notifications = [], markNotificationAsRead, error }) {
-  console.log("[NotificationsList] Rendering, notifications:", notifications);
-  return (
-    <div>
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
-      {error && (
-        <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4 animate-fade-in">
-          {error}
-        </p>
-      )}
-      {notifications.length === 0 ? (
-        <p className="text-gray-600">No notifications.</p>
-      ) : (
-        <ul className="space-y-2">
-          {notifications.map((notification) => (
-            <li
-              key={notification?._id || `notif-${Date.now()}`}
-              className={`p-3 rounded-lg transition ${
-                notification.read ? "bg-gray-100" : "bg-blue-50"
-              } hover:bg-blue-100`}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
-                  <p className="text-xs text-gray-500">
-                    {notification?.createdAt
-                      ? new Date(notification.createdAt).toLocaleString()
-                      : "Unknown time"}
-                  </p>
-                </div>
-                {!notification.read && (
-                  <button
-                    onClick={() => markNotificationAsRead(notification._id)}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Mark as read
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );

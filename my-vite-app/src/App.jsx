@@ -30,7 +30,7 @@ function ProtectedRoute({ children, allowedRole }) {
     userRole,
     isLoading,
     allowedRole,
-    token: localStorage.getItem("token") || "none",
+    token: localStorage.getItem("token")?.slice(0, 20) + "..." || "none",
     path: window.location.pathname,
     timestamp: new Date().toISOString(),
   });
@@ -38,35 +38,31 @@ function ProtectedRoute({ children, allowedRole }) {
   React.useEffect(() => {
     let isMounted = true;
     const verifyToken = async () => {
-      if (!isMounted) {
-        console.log("[ProtectedRoute] Aborted: Unmounted");
-        return;
-      }
       const token = localStorage.getItem("token");
-      console.log("[ProtectedRoute] Token:", { exists: !!token, token: token || "none" });
+      console.log("[ProtectedRoute] Token:", { exists: !!token, token: token?.slice(0, 20) + "..." || "none" });
       if (!token) {
-        console.log("[ProtectedRoute] No token found, redirecting to signin");
+        console.log("[ProtectedRoute] No token, redirecting to signin");
         dispatch(logout());
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
         return;
       }
 
       try {
         dispatch(verifyTokenStart());
-        const endpoint =
-          allowedRole === "doctor"
-            ? "http://localhost:5000/api/doctor/user"
-            : "http://localhost:5000/api/patient/user";
+        const endpoint = `http://localhost:5000/api/${allowedRole}/user`;
         console.log("[ProtectedRoute] Fetching:", endpoint);
         const response = await fetch(endpoint, {
           method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
         });
         const data = await response.json();
         console.log("[ProtectedRoute] Response:", { status: response.status, data });
 
         if (isMounted) {
-          if (response.ok) {
+          if (response.ok && data.role === allowedRole) {
             console.log("[ProtectedRoute] Success:", { role: data.role });
             setUserRole(data.role);
             dispatch(
@@ -77,21 +73,22 @@ function ProtectedRoute({ children, allowedRole }) {
               })
             );
           } else {
-            console.error("[ProtectedRoute] Failed:", data.message);
+            console.error("[ProtectedRoute] Failed:", {
+              message: data.message || "Invalid response",
+              status: response.status,
+            });
             localStorage.removeItem("token");
-            dispatch(logout());
+            dispatch(verifyTokenFailure(data.message || "Authentication failed"));
+            setUserRole(null);
           }
         }
       } catch (err) {
-        if (isMounted) {
-          console.error("[ProtectedRoute] Error:", { message: err.message });
-          localStorage.removeItem("token");
-          dispatch(logout());
-        }
+        console.error("[ProtectedRoute] Error:", { message: err.message });
+        localStorage.removeItem("token");
+        dispatch(verifyTokenFailure(err.message || "Server error"));
+        if (isMounted) setUserRole(null);
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
@@ -106,13 +103,13 @@ function ProtectedRoute({ children, allowedRole }) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
 
-  if (!userRole || !isAuthenticated) {
-    console.log("[ProtectedRoute] No user role or not authenticated, redirecting to /auth/signin");
-    return <Navigate to="/auth/signin" replace />;
-  }
-
-  if (allowedRole && userRole !== allowedRole) {
-    console.log("[ProtectedRoute] Role mismatch:", { currentRole: userRole, requiredRole: allowedRole });
+  if (!isAuthenticated || !userRole || userRole !== allowedRole) {
+    console.log("[ProtectedRoute] Authentication failed:", {
+      isAuthenticated,
+      userRole,
+      requiredRole: allowedRole,
+      redirectingTo: "/auth/signin",
+    });
     return <Navigate to="/auth/signin" replace />;
   }
 
@@ -129,12 +126,12 @@ function AuthRedirect({ children }) {
     pathname,
     isAuthenticated,
     role,
-    token: localStorage.getItem("token") || "none",
+    token: localStorage.getItem("token")?.slice(0, 20) + "..." || "none",
     timestamp: new Date().toISOString(),
   });
 
   if (isAuthenticated && role && pathname.startsWith('/auth')) {
-    console.log("[AuthRedirect] Authenticated user on auth route, redirecting to dashboard:", { role });
+    console.log("[AuthRedirect] Authenticated user on auth route, redirecting:", { role });
     const redirectTo = role === 'doctor' ? '/doctor-dashboard' : '/patient-dashboard';
     return <Navigate to={redirectTo} replace />;
   }
@@ -196,107 +193,20 @@ function RedirectHandler() {
   return <Navigate to="/auth/signin" replace />;
 }
 
-// Inner App component to use Redux hooks
+// Inner App component
 function InnerApp() {
-  const dispatch = useDispatch();
   const { isAuthenticated, role, user } = useSelector((state) => state.auth);
-  const [isInitialLoading, setIsInitialLoading] = React.useState(true);
   const availability = user?.availability || { startTime: "", endTime: "", days: [] };
 
-  console.log("[InnerApp] Initial state:", {
+  console.log("[InnerApp] Rendering:", {
     isAuthenticated,
     role,
-    isInitialLoading,
     path: window.location.pathname,
     timestamp: new Date().toISOString(),
   });
 
-  React.useEffect(() => {
-    let isMounted = true;
-    const verifyToken = async () => {
-      const token = localStorage.getItem("token");
-      console.log("[InnerApp] Token check:", { exists: !!token, token: token || "none" });
-
-      if (!token) {
-        console.log("[InnerApp] No token found, setting initial loading to false");
-        dispatch(logout());
-        if (isMounted) setIsInitialLoading(false);
-        return;
-      }
-
-      try {
-        dispatch(verifyTokenStart());
-        // Try doctor endpoint first
-        let endpoint = "http://localhost:5000/api/doctor/user";
-        console.log("[InnerApp] Fetching:", endpoint);
-        let response = await fetch(endpoint, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        let data = await response.json();
-        console.log("[InnerApp] Doctor endpoint response:", { status: response.status, data });
-
-        if (!response.ok && data.message !== "Access denied: Not a doctor") {
-          throw new Error(data.message || "Token verification failed");
-        }
-
-        // If doctor endpoint fails with "Not a doctor", try patient endpoint
-        if (!response.ok) {
-          endpoint = "http://localhost:5000/api/patient/user";
-          console.log("[InnerApp] Fetching:", endpoint);
-          response = await fetch(endpoint, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          data = await response.json();
-          console.log("[InnerApp] Patient endpoint response:", { status: response.status, data });
-        }
-
-        if (isMounted) {
-          if (response.ok) {
-            console.log("[InnerApp] Success:", { role: data.role });
-            dispatch(
-              verifyTokenSuccess({
-                user: data,
-                role: data.role,
-                isEmailVerified: data.isEmailVerified || false,
-              })
-            );
-          } else {
-            console.error("[InnerApp] Failed:", data.message);
-            localStorage.removeItem("token");
-            dispatch(logout());
-          }
-        }
-      } catch (err) {
-        if (isMounted) {
-          console.error("[InnerApp] Error:", { message: err.message });
-          localStorage.removeItem("token");
-          dispatch(logout());
-        }
-      } finally {
-        if (isMounted) {
-          setIsInitialLoading(false);
-          console.log("[InnerApp] Initial loading complete");
-        }
-      }
-    };
-
-    verifyToken();
-    return () => {
-      isMounted = false;
-    };
-  }, [dispatch]);
-
-  if (isInitialLoading) {
-    console.log("[InnerApp] Initial loading");
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
-  }
-
-  console.log("[InnerApp] Rendering routes:", { path: window.location.pathname, timestamp: new Date().toISOString() });
-
   return (
-    <AvailabilityContext.Provider value={{ availability, dispatch }}>
+    <AvailabilityContext.Provider value={{ availability, dispatch: store.dispatch }}>
       <AuthRedirect>
         <Routes>
           <Route path="/auth/signin" element={<Signin />} />

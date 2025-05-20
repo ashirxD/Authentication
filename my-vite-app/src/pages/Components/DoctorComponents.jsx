@@ -652,4 +652,4 @@ export const NotificationsList = ({ notifications = [], markNotificationAsRead, 
       )}
     </div>
   );
-};
+};  
