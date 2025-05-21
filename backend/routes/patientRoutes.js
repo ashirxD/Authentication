@@ -832,4 +832,35 @@ router.put("/notifications/:id/read", async (req, res) => {
   }
 });
 
+// Mark all notifications as read
+router.put("/notifications/read-all", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[PUT /notifications/read-all] Unauthorized: No user ID", { timestamp: new Date().toISOString() });
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const Notification = req.app.get("Notification");
+    const result = await Notification.updateMany(
+      { userId: req.user.id, read: false },
+      { $set: { read: true } }
+    );
+
+    console.log("[PUT /notifications/read-all] Notifications marked as read:", {
+      userId: req.user.id,
+      modifiedCount: result.modifiedCount,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ message: `${result.modifiedCount} notifications marked as read` });
+  } catch (err) {
+    console.error("[PUT /notifications/read-all] Error:", {
+      message: err.message,
+      stack: err.stack,
+      timestamp: new Date().toISOString(),
+    });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 module.exports = router;

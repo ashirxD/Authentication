@@ -355,7 +355,7 @@ router.post("/appointment/accept", async (req, res) => {
       type: "appointment_accepted",
       appointmentId: request._id,
     });
-    await doctorNotification.save();
+    await patientNotification.save();
 
     io.to(req.user.id.toString()).emit("appointmentUpdate", {
       requestId,
@@ -442,7 +442,7 @@ router.post("/appointment/reject", async (req, res) => {
       userId: request.patient,
       message: `Dr. ${doctor.name} rejected your appointment request`,
       type: "appointment_rejected",
-      appointmentId: request._id,
+      appointmentId: require._id,
     });
     await patientNotification.save();
 
@@ -484,6 +484,42 @@ router.post("/appointment/reject", async (req, res) => {
     if (err.kind === "ObjectId") {
       return res.status(400).json({ message: "Invalid request ID format" });
     }
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Mark all notifications as read
+router.put("/notifications/read-all", async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      console.error("[PUT /notifications/read-all] Unauthorized: No user ID");
+      return res.status(401).json({ message: "Unauthorized: Invalid user" });
+    }
+
+    const Notification = req.app.get("Notification");
+    const io = req.app.get("io");
+
+    const result = await Notification.updateMany(
+      { userId: req.user.id, read: false },
+      { $set: { read: true } }
+    );
+
+    console.log("[PUT /notifications/read-all] Notifications updated:", {
+      userId: req.user.id,
+      modifiedCount: result.modifiedCount,
+    });
+
+    io.to(req.user.id.toString()).emit("notificationsMarkedAsRead", {
+      userId: req.user.id,
+      timestamp: new Date(),
+    });
+
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error("[PUT /notifications/read-all] Error:", {
+      message: err.message,
+      stack: err.stack,
+    });
     res.status(500).json({ message: "Server error" });
   }
 });

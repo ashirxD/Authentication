@@ -376,6 +376,42 @@ export default function PatientDashboard() {
     []
   );
 
+  
+// Mark all notifications as read
+const markAllNotificationsAsRead = useCallback(async () => {
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.log("[markAllNotificationsAsRead] No token, redirecting to signin");
+      dispatch(logout());
+      navigate("/auth/signin", { replace: true });
+      return;
+    }
+    const apiUrl = `${import.meta.env.VITE_API_URL}/api/patient/notifications/read-all`;
+    console.log("[markAllNotificationsAsRead] Fetching:", apiUrl);
+    const response = await fetch(apiUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("[markAllNotificationsAsRead] Failed:", text);
+      setError("Failed to mark notifications as read");
+      return;
+    }
+    console.log("[markAllNotificationsAsRead] Success");
+    setNotifications((prev) =>
+      prev.map((notif) => ({ ...notif, read: true }))
+    );
+  } catch (err) {
+    console.error("[markAllNotificationsAsRead] Error:", err);
+    setError("Failed to mark notifications as read");
+  }
+}, [dispatch, navigate]);
+
   // Token validation effect
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -563,13 +599,7 @@ export default function PatientDashboard() {
     };
   }, [socket, dispatch, navigate, reduxUser, userData._id, timeFilter, statusFilter, doctorFilter]);
 
-  // Auto-close notifications effect
-  useEffect(() => {
-    if (showNotifications && notifications.every((n) => n.read)) {
-      console.log("[useEffect] All notifications read, closing dropdown");
-      setShowNotifications(false);
-    }
-  }, [notifications, showNotifications]);
+
 
   // Log render loop debugging
   useEffect(() => {
@@ -911,6 +941,7 @@ export default function PatientDashboard() {
             toggleNotifications={toggleNotifications}
             showNotifications={showNotifications}
             markNotificationAsRead={markNotificationAsRead}
+            markAllNotificationsAsRead={markAllNotificationsAsRead}
             socketStatus={socketStatus}
           />
           <div className="text-sm text-gray-600 mb-4">
@@ -921,4 +952,4 @@ export default function PatientDashboard() {
       </div>
     </div>
   );
-}
+}  

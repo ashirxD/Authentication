@@ -76,6 +76,7 @@ export function PatientHeader({
   toggleNotifications,
   showNotifications,
   markNotificationAsRead,
+  markAllNotificationsAsRead,
   socketStatus,
 }) {
   console.log("[PatientHeader] Rendering, props:", {
@@ -86,6 +87,7 @@ export function PatientHeader({
     showNotifications,
     socketStatus,
   });
+  console.log("[PatientHeader] showNotifications state:", showNotifications);
 
   return (
     <div key={`header-${unreadCount}`} className="mb-8 flex items-center justify-between">
@@ -129,6 +131,7 @@ export function PatientHeader({
               <NotificationsList
                 notifications={notifications}
                 markNotificationAsRead={markNotificationAsRead}
+                markAllNotificationsAsRead={markAllNotificationsAsRead}
               />
             </div>
           </div>
@@ -137,50 +140,49 @@ export function PatientHeader({
     </div>
   );
 }
-
-// Notifications List Component
-export function NotificationsList({ notifications = [], markNotificationAsRead }) {
-  console.log("[NotificationsList] Rendering, notifications:", notifications);
+export default function NotificationsList({
+  notifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+}) {
   return (
     <div>
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
+      <button
+        onClick={markAllNotificationsAsRead}
+        className="w-full text-sm text-blue-600 hover:text-blue-800 p-2 text-center border-b border-gray-200"
+      >
+        Mark All as Read
+      </button>
       {notifications.length === 0 ? (
-        <p className="text-gray-600">No notifications.</p>
+        <p className="text-gray-600 p-2 text-center">No notifications</p>
       ) : (
-        <ul className="space-y-2">
-          {notifications.map((notification) => (
-            <li
-              key={notification?._id || `notif-${Date.now()}`}
-              className={`p-3 rounded-lg transition ${
-                notification.read ? "bg-gray-100" : "bg-blue-50"
-              } hover:bg-blue-100`}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
-                  <p className="text-xs text-gray-500">
-                    {notification?.createdAt
-                      ? new Date(notification.createdAt).toLocaleString()
-                      : "Unknown time"}
-                  </p>
-                </div>
-                {!notification.read && (
-                  <button
-                    onClick={() => markNotificationAsRead(notification._id)}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Mark as read
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+        notifications.map((notification) => (
+          <div
+            key={notification._id}
+            className={`p-3 border-b border-gray-200 hover:bg-gray-50 flex justify-between items-center ${
+              notification.read ? "opacity-50" : ""
+            }`}
+          >
+            <div>
+              <p className="text-sm text-gray-800">{notification.message}</p>
+              <p className="text-xs text-gray-500">
+                {new Date(notification.createdAt).toLocaleString()}
+              </p>
+            </div>
+            {!notification.read && (
+              <button
+                onClick={() => markNotificationAsRead(notification._id)}
+                className="text-xs text-blue-500 hover:text-blue-700 underline"
+              >
+                Mark as Read
+              </button>
+            )}
+          </div>
+        ))
       )}
     </div>
   );
 }
-
 // Appointments Section
 export function AppointmentsSection({
   error,

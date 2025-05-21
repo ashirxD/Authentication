@@ -343,6 +343,41 @@ export default function DoctorDashboard() {
     }
   }, [dispatch, navigate]);
 
+  // Mark all notifications as read
+  const markAllNotificationsAsRead = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        console.log("[markAllNotificationsAsRead] No token, redirecting to signin");
+        dispatch(logout());
+        navigate("/auth/signin", { replace: true });
+        return;
+      }
+      const apiUrl = `${import.meta.env.VITE_API_URL}/api/doctor/notifications/read-all`;
+      console.log("[markAllNotificationsAsRead] Fetching:", apiUrl);
+      const response = await fetch(apiUrl, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        console.error("[markAllNotificationsAsRead] Failed:", text);
+        setError("Failed to mark all notifications as read");
+        return;
+      }
+      console.log("[markAllNotificationsAsRead] Success");
+      setNotifications((prev) =>
+        prev.map((notif) => ({ ...notif, read: true }))
+      );
+    } catch (err) {
+      console.error("[markAllNotificationsAsRead] Error:", err);
+      setError("Failed to mark all notifications as read");
+    }
+  }, [dispatch, navigate]);
+
   // Debounced notification update
   const debouncedSetNotifications = useCallback(
     debounce((newNotifications) => {
@@ -465,6 +500,13 @@ export default function DoctorDashboard() {
       }
     });
 
+    socket.on("notificationsMarkedAsRead", ({ userId, timestamp }) => {
+      console.log("[Socket.IO] Notifications marked as read:", { userId, timestamp });
+      setNotifications((prev) =>
+        prev.map((notif) => ({ ...notif, read: true }))
+      );
+    });
+
     socket.on("disconnect", () => {
       console.log("[Socket.IO] Disconnected from server");
       setSocketStatus("disconnected");
@@ -480,18 +522,11 @@ export default function DoctorDashboard() {
       socket.off("connect_error");
       socket.off("newAppointmentRequest");
       socket.off("appointmentUpdate");
+      socket.off("notificationsMarkedAsRead");
       socket.off("disconnect");
       socket.disconnect();
     };
   }, [socket, dispatch, navigate, reduxUser, userData._id, activeSection]);
-
-  // Auto-close notifications effect
-  useEffect(() => {
-    if (showNotifications && notifications.every((n) => n.read)) {
-      console.log("[useEffect] All notifications read, closing dropdown");
-      setShowNotifications(false);
-    }
-  }, [notifications, showNotifications]);
 
   // Log render loop debugging
   useEffect(() => {
@@ -892,6 +927,7 @@ export default function DoctorDashboard() {
             toggleNotifications={toggleNotifications}
             showNotifications={showNotifications}
             markNotificationAsRead={markNotificationAsRead}
+            markAllNotificationsAsRead={markAllNotificationsAsRead}
             error={error}
             socketStatus={socketStatus}
           />

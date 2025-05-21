@@ -38,7 +38,7 @@ export const Sidebar = ({ activeSection, setActiveSection, handleLogout }) => {
           <button
             onClick={() => setActiveSection("appointment-requests")}
             className={`w-full flex items-center p-3 rounded-lg text-gray-700 hover:bg-blue-100 transition ${
-              activeSection === "ظهور-طلبات-الموعد" ? "bg-blue-100 text-blue-600" : ""
+              activeSection === "appointment-requests" ? "bg-blue-100 text-blue-600" : ""
             }`}
           >
             <ClipboardDocumentListIcon className="w-6 h-6 mr-3" />
@@ -74,6 +74,7 @@ export const Header = ({
   toggleNotifications,
   showNotifications,
   markNotificationAsRead,
+  markAllNotificationsAsRead,
   error,
 }) => {
   console.log("[Header] Rendering, userData:", userData);
@@ -125,6 +126,7 @@ export const Header = ({
               <NotificationsList
                 notifications={notifications}
                 markNotificationAsRead={markNotificationAsRead}
+                markAllNotificationsAsRead={markAllNotificationsAsRead}
                 error={error}
               />
             </div>
@@ -607,11 +609,23 @@ export const EditProfileForm = ({
 };
 
 // Notifications List Component
-export const NotificationsList = ({ notifications = [], markNotificationAsRead, error }) => {
+export const NotificationsList = ({ notifications = [], markNotificationAsRead, markAllNotificationsAsRead, error }) => {
   console.log("[NotificationsList] Rendering, notifications:", notifications);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
   return (
     <div>
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Notifications</h3>
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold text-gray-800">Notifications</h3>
+        {unreadCount > 0 && (
+          <button
+            onClick={markAllNotificationsAsRead}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            Mark All as Read
+          </button>
+        )}
+      </div>
       {error && (
         <p className="text-red-600 bg-red-100 border border-red-400 rounded p-3 mb-4 animate-fade-in">
           {error}
@@ -620,36 +634,41 @@ export const NotificationsList = ({ notifications = [], markNotificationAsRead, 
       {notifications.length === 0 ? (
         <p className="text-gray-600">No notifications.</p>
       ) : (
-        <ul className="space-y-2">
-          {notifications.map((notification) => (
-            <li
-              key={notification?._id || `notif-${Date.now()}`}
-              className={`p-3 rounded-lg transition ${
-                notification.read ? "bg-gray-100" : "bg-blue-50"
-              } hover:bg-blue-100`}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
-                  <p className="text-xs text-gray-500">
-                    {notification?.createdAt
-                      ? new Date(notification.createdAt).toLocaleString()
-                      : "Unknown time"}
-                  </p>
+        <>
+          {notifications.every((n) => n.read) && (
+            <p className="text-gray-600 mb-2">All notifications read.</p>
+          )}
+          <ul className="space-y-2">
+            {notifications.map((notification) => (
+              <li
+                key={notification?._id || `notif-${Date.now()}`}
+                className={`p-3 rounded-lg transition ${
+                  notification.read ? "bg-gray-100" : "bg-blue-50"
+                } hover:bg-blue-100`}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <p className="text-sm text-gray-800">{notification?.message || "No message"}</p>
+                    <p className="text-xs text-gray-500">
+                      {notification?.createdAt
+                        ? new Date(notification.createdAt).toLocaleString()
+                        : "Unknown time"}
+                    </p>
+                  </div>
+                  {!notification.read && (
+                    <button
+                      onClick={() => markNotificationAsRead(notification._id)}
+                      className="text-blue-600 hover:text-blue-800 text-sm"
+                    >
+                      Mark as read
+                    </button>
+                  )}
                 </div>
-                {!notification.read && (
-                  <button
-                    onClick={() => markNotificationAsRead(notification._id)}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Mark as read
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
-};  
+};
